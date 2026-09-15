@@ -58,15 +58,39 @@ function clearKey() {
   setStatus("AppKey 已清除。", false);
 }
 
-async function readCurrentSlideText() {
-  return PowerPoint.run(async (context) => {
-    const selectedSlides = context.presentation.getSelectedSlides();
-    const slideCount = selectedSlides.getCount();
-    selectedSlides.load("items");
-    await context.sync();
-    if (slideCount.value < 1) throw new Error("请先选中一张题目幻灯片。");
+function getCurrentSlideIndex() {
+  return new Promise((resolve) => {
+    Office.context.document.getSelectedDataAsync(
+      Office.CoercionType.SlideRange,
+      (result) => {
+        if (
+          result.status === Office.AsyncResultStatus.Succeeded &&
+          result.value?.slides?.length
+        ) {
+          resolve(result.value.slides[0].index - 1);
+        } else {
+          resolve(null);
+        }
+      }
+    );
+  });
+}
 
-    const slide = selectedSlides.items[0];
+async function readCurrentSlideText() {
+  const currentSlideIndex = await getCurrentSlideIndex();
+  return PowerPoint.run(async (context) => {
+    let slide;
+    if (currentSlideIndex !== null) {
+      slide = context.presentation.slides.getItemAt(currentSlideIndex);
+    } else {
+      const selectedSlides = context.presentation.getSelectedSlides();
+      const slideCount = selectedSlides.getCount();
+      selectedSlides.load("items");
+      await context.sync();
+      if (slideCount.value < 1) throw new Error("没有识别到正在显示的幻灯片。");
+      slide = selectedSlides.items[0];
+    }
+
     const shapes = slide.shapes;
     shapes.load("items");
     await context.sync();
