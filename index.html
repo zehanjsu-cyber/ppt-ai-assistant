@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>宏观经济学 AI 助教</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>AI 课程助教</h1>
+        <p>读取当前页，自动讲解</p>
+      </div>
+      <button id="settingsButton" class="icon-button" aria-label="设置">⚙︎</button>
+    </header>
+
+    <section id="settings" class="panel hidden">
+      <label for="appKey">腾讯元器 AppKey</label>
+      <input id="appKey" type="password" autocomplete="off" placeholder="只保存在本机">
+      <div class="row">
+        <button id="saveKey" class="secondary">保存</button>
+        <button id="clearKey" class="quiet">清除</button>
+      </div>
+      <p class="hint">AppKey 仅保存在本机加载项存储中，不会写入 PPT 或公开网页。</p>
+    </section>
+
+    <button id="explainButton" class="primary" disabled>AI 讲解本题</button>
+    <p id="status" class="status">正在连接 PowerPoint…</p>
+
+    <section class="answer-card">
+      <div class="answer-title">讲解</div>
+      <div id="answer" class="answer">点击上方按钮后，答案会显示在这里。</div>
+    </section>
+
+    <div class="followup">
+      <input id="followupInput" type="text" placeholder="继续追问…">
+      <button id="followupButton" class="secondary" disabled>发送</button>
+    </div>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
