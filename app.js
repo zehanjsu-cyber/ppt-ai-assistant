@@ -60,20 +60,31 @@ function clearKey() {
 
 async function readCurrentSlideText() {
   return PowerPoint.run(async (context) => {
-    const slide = context.presentation.getSelectedSlides().getItemAt(0);
+    const selectedSlides = context.presentation.getSelectedSlides();
+    const slideCount = selectedSlides.getCount();
+    selectedSlides.load("items");
+    await context.sync();
+    if (slideCount.value < 1) throw new Error("请先选中一张题目幻灯片。");
+
+    const slide = selectedSlides.items[0];
     const shapes = slide.shapes;
-    shapes.load("items/name,items/type,items/textFrame/hasText,items/textFrame/textRange/text");
+    shapes.load("items");
+    await context.sync();
+
+    const textShapes = shapes.items.filter((shape) =>
+      shape.type === PowerPoint.ShapeType.textBox ||
+      shape.type === PowerPoint.ShapeType.geometricShape ||
+      shape.type === PowerPoint.ShapeType.placeholder
+    );
+    textShapes.forEach((shape) => shape.textFrame.load("hasText,textRange/text"));
     await context.sync();
 
     const lines = [];
-    for (const shape of shapes.items) {
-      if (shape.type === PowerPoint.ShapeType.contentApp || shape.name === "AI_ANSWER") continue;
-      try {
-        if (shape.textFrame.hasText) {
-          const text = shape.textFrame.textRange.text.trim();
-          if (text) lines.push(text);
-        }
-      } catch (_) {}
+    for (const shape of textShapes) {
+      if (shape.textFrame.hasText) {
+        const text = shape.textFrame.textRange.text.trim();
+        if (text) lines.push(text);
+      }
     }
     return lines.join("\n").trim();
   });
