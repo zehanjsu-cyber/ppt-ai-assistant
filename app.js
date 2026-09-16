@@ -1,9 +1,13 @@
 const API_URL = "https://yuanqi.tencent.com/openapi/v1/agent/chat/completions";
 const ASSISTANT_ID = "2096407988983757888";
 const STORAGE_KEY = "yuanqi-app-key";
+const AUTO_SLIDES_KEY = "ppt-ai-auto-slide-ids";
 
 const els = {};
 let conversation = [];
+let isBusy = false;
+let wasReadView = false;
+const autoTriggeredSlides = new Set();
 
 Office.onReady((info) => {
   Object.assign(els, {
@@ -15,6 +19,8 @@ Office.onReady((info) => {
     appKey: document.getElementById("appKey"),
     saveKey: document.getElementById("saveKey"),
     clearKey: document.getElementById("clearKey"),
+    toggleAuto: document.getElementById("toggleAuto"),
+    autoStatus: document.getElementById("autoStatus"),
     followupInput: document.getElementById("followupInput"),
     followupButton: document.getElementById("followupButton"),
   });
@@ -22,6 +28,7 @@ Office.onReady((info) => {
   els.settingsButton.addEventListener("click", () => els.settings.classList.toggle("hidden"));
   els.saveKey.addEventListener("click", saveKey);
   els.clearKey.addEventListener("click", clearKey);
+  els.toggleAuto.addEventListener("click", toggleCurrentSlideAuto);
   els.explain.addEventListener("click", explainCurrentSlide);
   els.followupButton.addEventListener("click", askFollowup);
   els.followupInput.addEventListener("keydown", (event) => {
@@ -36,6 +43,13 @@ Office.onReady((info) => {
   els.explain.disabled = false;
   setStatus("已就绪：切到题目页后点击一次按钮。", false);
   if (!localStorage.getItem(STORAGE_KEY)) els.settings.classList.remove("hidden");
+  refreshAutoControl();
+  Office.context.document.addHandlerAsync(
+    Office.EventType.DocumentSelectionChanged,
+    refreshAutoControl,
+    () => {}
+  );
+  setInterval(checkAutoExplain, 800);
 });
 
 function setStatus(message, isError = false) {
@@ -58,7 +72,7 @@ function clearKey() {
   setStatus("AppKey 已清除。", false);
 }
 
-function getCurrentSlideIndex() {
+function getCurrentSlideInfo() {
   return new Promise((resolve) => {
     Office.context.document.getSelectedDataAsync(
       Office.CoercionType.SlideRange,
@@ -67,7 +81,8 @@ function getCurrentSlideIndex() {
           result.status === Office.AsyncResultStatus.Succeeded &&
           result.value?.slides?.length
         ) {
-          resolve(result.value.slides[0].index - 1);
+          const slide = result.value.slides[0];
+          resolve({ id: String(slide.id), index: slide.index - 1 });
         } else {
           resolve(null);
         }
@@ -76,12 +91,83 @@ function getCurrentSlideIndex() {
   });
 }
 
+function getActiveView() {
+  return new Promise((resolve) => {
+    Office.context.document.getActiveViewAsync((result) => {
+      resolve(result.status === Office.AsyncResultStatus.Succeeded ? result.value : null);
+    });
+  });
+}
+
+function getAutoSlideIds() {
+  const value = Office.context.document.settings.get(AUTO_SLIDES_KEY);
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+function saveAutoSlideIds(ids) {
+  return new Promise((resolve, reject) => {
+    Office.context.document.settings.set(AUTO_SLIDES_KEY, ids);
+    Office.context.document.settings.saveAsync((result) => {
+      if (result.status === Office.AsyncResultStatus.Succeeded) resolve();
+      else reject(new Error(result.error.message));
+    });
+  });
+}
+
+async function refreshAutoControl() {
+  const [view, slide] = await Promise.all([getActiveView(), getCurrentSlideInfo()]);
+  if (view === "read") {
+    els.toggleAuto.disabled = true;
+    els.autoStatus.textContent = "放映中；请在编辑模式设置自动讲解页。";
+    return;
+  }
+  els.toggleAuto.disabled = !slide;
+  const enabled = slide && getAutoSlideIds().includes(slide.id);
+  els.toggleAuto.textContent = enabled ? "取消本页自动讲解" : "将本页设为自动讲解页";
+  els.autoStatus.textContent = enabled
+    ? "本页已开启：放映翻到这里会自动讲解一次。"
+    : "备课时在需要自动讲解的页面开启。";
+}
+
+async function toggleCurrentSlideAuto() {
+  const slide = await getCurrentSlideInfo();
+  if (!slide) return setStatus("请先进入需要自动讲解的幻灯片。", true);
+  const ids = getAutoSlideIds();
+  const next = ids.includes(slide.id)
+    ? ids.filter((id) => id !== slide.id)
+    : [...ids, slide.id];
+  try {
+    await saveAutoSlideIds(next);
+    await refreshAutoControl();
+    setStatus(next.includes(slide.id) ? "本页自动讲解已开启。" : "本页自动讲解已取消。", false);
+  } catch (error) {
+    setStatus(error.message || String(error), true);
+  }
+}
+
+async function checkAutoExplain() {
+  if (isBusy) return;
+  const view = await getActiveView();
+  if (view !== "read") {
+    if (wasReadView) autoTriggeredSlides.clear();
+    wasReadView = false;
+    return;
+  }
+  if (!wasReadView) autoTriggeredSlides.clear();
+  wasReadView = true;
+  const slide = await getCurrentSlideInfo();
+  if (!slide || !getAutoSlideIds().includes(slide.id) || autoTriggeredSlides.has(slide.id)) return;
+  autoTriggeredSlides.add(slide.id);
+  setStatus("已进入自动讲解页，正在开始讲解…", false);
+  await explainCurrentSlide();
+}
+
 async function readCurrentSlideText() {
-  const currentSlideIndex = await getCurrentSlideIndex();
+  const currentSlide = await getCurrentSlideInfo();
   return PowerPoint.run(async (context) => {
     let slide;
-    if (currentSlideIndex !== null) {
-      slide = context.presentation.slides.getItemAt(currentSlideIndex);
+    if (currentSlide !== null) {
+      slide = context.presentation.slides.getItemAt(currentSlide.index);
     } else {
       const selectedSlides = context.presentation.getSelectedSlides();
       const slideCount = selectedSlides.getCount();
@@ -115,12 +201,14 @@ async function readCurrentSlideText() {
 }
 
 async function explainCurrentSlide() {
+  if (isBusy) return;
   const key = localStorage.getItem(STORAGE_KEY);
   if (!key) {
     els.settings.classList.remove("hidden");
     return setStatus("首次使用：请粘贴并保存 AppKey。", true);
   }
 
+  isBusy = true;
   setBusy(true, "正在读取当前页…");
   try {
     const question = await readCurrentSlideText();
@@ -136,15 +224,18 @@ async function explainCurrentSlide() {
   } catch (error) {
     setStatus(error.message || String(error), true);
   } finally {
+    isBusy = false;
     els.explain.disabled = false;
   }
 }
 
 async function askFollowup() {
+  if (isBusy) return;
   const text = els.followupInput.value.trim();
   const key = localStorage.getItem(STORAGE_KEY);
   if (!text || !key || conversation.length === 0) return;
   els.followupInput.value = "";
+  isBusy = true;
   setBusy(true, "正在回答追问…");
   try {
     conversation.push({ role: "user", content: [{ type: "text", text }] });
@@ -155,6 +246,7 @@ async function askFollowup() {
   } catch (error) {
     setStatus(error.message || String(error), true);
   } finally {
+    isBusy = false;
     els.explain.disabled = false;
   }
 }
