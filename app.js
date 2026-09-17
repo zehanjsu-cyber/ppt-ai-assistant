@@ -24,6 +24,7 @@ Office.onReady((info) => {
     autoStatus: document.getElementById("autoStatus"),
     followupInput: document.getElementById("followupInput"),
     followupButton: document.getElementById("followupButton"),
+    followupQuestion: document.getElementById("followupQuestion"),
   });
 
   els.settingsButton.addEventListener("click", () => els.settings.classList.toggle("hidden"));
@@ -33,7 +34,9 @@ Office.onReady((info) => {
   els.explain.addEventListener("click", explainCurrentSlide);
   els.followupButton.addEventListener("click", askFollowup);
   els.followupInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") askFollowup();
+    if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) {
+      event.preventDefault(); askFollowup();
+    }
   });
 
   if (info.host !== Office.HostType.PowerPoint) {
@@ -222,6 +225,8 @@ async function explainCurrentSlide() {
     const answer = await callYuanqi(key, conversation);
     conversation.push({ role: "assistant", content: [{ type: "text", text: answer }] });
     els.answer.textContent = answer;
+    els.followupQuestion.textContent = "";
+    els.followupQuestion.classList.add("hidden");
     answerSlideId = sourceSlide.id;
     document.dispatchEvent(new CustomEvent("answer-ready", { detail: { slideId: answerSlideId } }));
     els.followupButton.disabled = false;
@@ -232,6 +237,7 @@ async function explainCurrentSlide() {
   } finally {
     isBusy = false;
     els.explain.disabled = false;
+    els.followupButton.disabled = conversation.length === 0;
   }
 }
 
@@ -239,15 +245,19 @@ async function askFollowup() {
   if (isBusy) return;
   const text = els.followupInput.value.trim();
   const key = localStorage.getItem(STORAGE_KEY);
-  if (!text || !key || conversation.length === 0) return;
-  els.followupInput.value = "";
+  if (!text) return setStatus("请先输入追问问题。", true);
+  if (!key) return setStatus("请先在设置中保存 AppKey。", true);
+  if (conversation.length === 0) return setStatus("请先讲解本题，再继续追问。", true);
+  const messages = [...conversation, { role: "user", content: [{ type: "text", text }] }];
+  els.followupQuestion.textContent = "你的追问：" + text;
+  els.followupQuestion.classList.remove("hidden");
   isBusy = true;
   document.dispatchEvent(new Event("answer-pending"));
   setBusy(true, "正在回答追问…");
   try {
-    conversation.push({ role: "user", content: [{ type: "text", text }] });
-    const answer = await callYuanqi(key, conversation);
-    conversation.push({ role: "assistant", content: [{ type: "text", text: answer }] });
+    const answer = await callYuanqi(key, messages);
+    conversation = [...messages, { role: "assistant", content: [{ type: "text", text: answer }] }];
+    if (els.followupInput.value.trim() === text) els.followupInput.value = "";
     els.answer.textContent = answer;
     document.dispatchEvent(new CustomEvent("answer-ready", { detail: { slideId: answerSlideId } }));
     setStatus("追问完成。", false);
@@ -257,6 +267,7 @@ async function askFollowup() {
   } finally {
     isBusy = false;
     els.explain.disabled = false;
+    els.followupButton.disabled = conversation.length === 0;
   }
 }
 

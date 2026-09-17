@@ -65,6 +65,7 @@
 
     <section class="answer-card">
       <div class="answer-title">本题解析 <span id="readingStatus" aria-live="polite">等待讲解</span><button id="replayVoice" class="secondary" disabled style="padding:4px 10px;font-size:12px">重听</button></div>
+      <div id="followupQuestion" class="hidden" style="flex-shrink:0;padding:8px 10px;margin-bottom:8px;background:#edf3fa;border-radius:8px;overflow-wrap:anywhere;max-height:80px;overflow:auto" aria-live="polite"></div>
       <div id="answer" class="answer">点击上方按钮后，答案会显示在这里。</div>
     </section>
 
@@ -73,7 +74,7 @@
       <button id="followupButton" class="secondary" disabled>发送</button>
     </div>
   </main>
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
   <script src="voice.js?v=2"></script>
   <script src="scroll.js?v=3"></script>
 </body>
