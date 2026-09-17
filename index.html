@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>宏观经济学 AI 助教</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=2">
   <style>
     html, body { height: 100%; }
     main { height: 100%; display: flex; flex-direction: column; overflow: auto; }
@@ -23,9 +23,10 @@
 <body>
   <main>
     <header>
+      <img class="tutor-avatar" src="tutor-avatar.png" alt="卡通 AI 助教">
       <div>
-        <h1>AI 课程助教</h1>
-        <p>读取当前页，自动讲解</p>
+        <h1>宏观 AI 助教</h1>
+        <p>读懂题目 · 讲清原理</p>
       </div>
       <button id="settingsButton" class="icon-button" aria-label="设置">⚙︎</button>
     </header>
@@ -53,7 +54,7 @@
     <p id="status" class="status">正在连接 PowerPoint…</p>
 
     <section class="answer-card">
-      <div class="answer-title">讲解</div>
+      <div class="answer-title">本题解析 <span id="readingStatus" aria-live="polite">等待讲解</span></div>
       <div id="answer" class="answer">点击上方按钮后，答案会显示在这里。</div>
     </section>
 
@@ -62,7 +63,7 @@
       <button id="followupButton" class="secondary" disabled>发送</button>
     </div>
   </main>
-  <script src="app.js?v=4"></script>
-  <script src="scroll.js?v=1"></script>
+  <script src="app.js?v=5"></script>
+  <script src="scroll.js?v=2"></script>
 </body>
 </html>

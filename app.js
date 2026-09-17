@@ -7,6 +7,7 @@ const els = {};
 let conversation = [];
 let isBusy = false;
 let wasReadView = false;
+let answerSlideId = null;
 const autoTriggeredSlides = new Set();
 
 Office.onReady((info) => {
@@ -162,8 +163,7 @@ async function checkAutoExplain() {
   await explainCurrentSlide();
 }
 
-async function readCurrentSlideText() {
-  const currentSlide = await getCurrentSlideInfo();
+async function readCurrentSlideText(currentSlide) {
   return PowerPoint.run(async (context) => {
     let slide;
     if (currentSlide !== null) {
@@ -209,9 +209,12 @@ async function explainCurrentSlide() {
   }
 
   isBusy = true;
+  document.dispatchEvent(new Event("answer-pending"));
   setBusy(true, "正在读取当前页…");
   try {
-    const question = await readCurrentSlideText();
+    const sourceSlide = await getCurrentSlideInfo();
+    if (!sourceSlide) throw new Error("没有识别到正在显示的幻灯片，请重试。");
+    const question = await readCurrentSlideText(sourceSlide);
     if (!question) throw new Error("当前页没有读取到文字。图片题请把题目文字放在一个文本框中。");
 
     const prompt = `你是大学宏观经济学课堂的AI课程助教。请讲解下面的题目：\n\n${question}\n\n要求：先明确给出正确答案；再解释核心原理；有选项时逐项判断；不虚构题目中没有的数据；控制在课堂60—90秒可讲完；最后用一句话总结考点。`;
@@ -219,9 +222,12 @@ async function explainCurrentSlide() {
     const answer = await callYuanqi(key, conversation);
     conversation.push({ role: "assistant", content: [{ type: "text", text: answer }] });
     els.answer.textContent = answer;
+    answerSlideId = sourceSlide.id;
+    document.dispatchEvent(new CustomEvent("answer-ready", { detail: { slideId: answerSlideId } }));
     els.followupButton.disabled = false;
     setStatus("讲解完成。", false);
   } catch (error) {
+    document.dispatchEvent(new Event("answer-failed"));
     setStatus(error.message || String(error), true);
   } finally {
     isBusy = false;
@@ -236,14 +242,17 @@ async function askFollowup() {
   if (!text || !key || conversation.length === 0) return;
   els.followupInput.value = "";
   isBusy = true;
+  document.dispatchEvent(new Event("answer-pending"));
   setBusy(true, "正在回答追问…");
   try {
     conversation.push({ role: "user", content: [{ type: "text", text }] });
     const answer = await callYuanqi(key, conversation);
     conversation.push({ role: "assistant", content: [{ type: "text", text: answer }] });
     els.answer.textContent = answer;
+    document.dispatchEvent(new CustomEvent("answer-ready", { detail: { slideId: answerSlideId } }));
     setStatus("追问完成。", false);
   } catch (error) {
+    document.dispatchEvent(new Event("answer-failed"));
     setStatus(error.message || String(error), true);
   } finally {
     isBusy = false;

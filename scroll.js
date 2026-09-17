@@ -3,7 +3,8 @@
   const SETTINGS_KEY = "ppt-ai-scroll-options";
   let answer, enabledInput, secondsInput, hint;
   let ownerSlide = null, visibleSlide = null, timer = null;
-  let checking = false, generation = 0;
+  let checking = false, generation = 0, ready = false, done = false, phase = "idle";
+  let progress;
 
   function options() {
     const saved = Office.context.document.settings.get(SETTINGS_KEY) || {};
@@ -18,28 +19,43 @@
     generation++;
     clearTimeout(timer);
     timer = null;
+    phase = "idle";
     if (answer) answer.scrollTo({ top: answer.scrollTop, behavior: "instant" });
   }
 
   function schedule() {
-    if (timer || !options().enabled || !visibleSlide || visibleSlide !== ownerSlide) return;
-    if (answer.scrollHeight <= answer.clientHeight + answer.scrollTop + 2) return;
+    if (phase !== "idle" || !ready || done || document.hidden || !options().enabled || !visibleSlide || visibleSlide !== ownerSlide || answer.clientHeight <= 0) return;
+    const atEnd = answer.scrollHeight <= answer.clientHeight + answer.scrollTop + 2;
+    progress.textContent = atEnd ? "最后一屏 · 阅读后停止" : "完整解析 · 每屏停留 " + options().seconds + " 秒";
     const token = generation;
+    phase = "dwell";
     timer = setTimeout(async () => {
-      timer = null;
+      phase = "checking";
       const [view, slide] = await Promise.all([getActiveView(), getCurrentSlideInfo()]);
-      if (token !== generation || view !== "read" || !slide || slide.id !== ownerSlide || !options().enabled) return;
+      if (token !== generation) return;
+      if (document.hidden || view !== "read" || !slide || slide.id !== ownerSlide || !options().enabled) { stop(); return; }
+      if (answer.scrollHeight <= answer.clientHeight + answer.scrollTop + 2) {
+        done = true; timer = null; phase = "idle";
+        progress.textContent = "全部解析已展示";
+        return;
+      }
+      phase = "moving";
       const overlap = Math.min(60, answer.clientHeight * 0.15);
       answer.scrollTo({
         top: Math.min(answer.scrollHeight - answer.clientHeight,
           answer.scrollTop + Math.max(1, answer.clientHeight - overlap)),
         behavior: "smooth",
       });
-      // Allow the smooth movement to finish before starting the next dwell.
-      timer = setTimeout(() => {
-        timer = null;
-        if (token === generation) schedule();
-      }, 1000);
+      // Start a fresh dwell only after movement has settled, not after a fixed delay.
+      let previous = -1, stable = 0;
+      function settle() {
+        if (token !== generation) return;
+        stable = Math.abs(answer.scrollTop - previous) < .5 ? stable + 1 : 0;
+        previous = answer.scrollTop;
+        if (stable >= 4) { timer = null; phase = "idle"; schedule(); }
+        else timer = setTimeout(settle, 100);
+      }
+      timer = setTimeout(settle, 100);
     }, options().seconds * 1000);
   }
 
@@ -47,13 +63,16 @@
     if (checking) return;
     checking = true;
     try {
+      const token = generation;
       const [view, slide] = await Promise.all([getActiveView(), getCurrentSlideInfo()]);
+      if (token !== generation) return;
       const current = view === "read" && slide && !document.hidden ? slide.id : null;
       document.body.classList.toggle("show-view", view === "read");
       if (current !== visibleSlide) {
         stop();
         visibleSlide = current;
         answer.scrollTop = 0;
+        done = false;
       }
       schedule();
     } finally {
@@ -67,6 +86,7 @@
     enabledInput = document.getElementById("autoScroll");
     secondsInput = document.getElementById("scrollSeconds");
     hint = document.getElementById("scrollStatus");
+    progress = document.getElementById("readingStatus");
     enabledInput.checked = options().enabled;
     secondsInput.value = options().seconds;
     document.getElementById("saveScroll").addEventListener("click", () => {
@@ -81,21 +101,32 @@
           ? "已保存：" + (enabledInput.checked ? "每屏停留 " + seconds + " 秒。" : "自动滚动已关闭。")
           : "保存失败，请重试。";
         stop();
+        done = false;
         check();
       });
     });
-    new MutationObserver(async () => {
+    document.addEventListener("answer-pending", () => {
+      stop(); ready = false;
+      progress.textContent = "正在准备完整解析…";
+    });
+    document.addEventListener("answer-failed", () => {
+      stop(); progress.textContent = "讲解未完成，请重试";
+    });
+    document.addEventListener("answer-ready", (event) => {
       stop();
-      ownerSlide = null;
+      ready = false; done = false;
+      ownerSlide = event.detail.slideId;
       answer.scrollTop = 0;
       const token = generation;
-      const slide = await getCurrentSlideInfo();
-      if (token !== generation) return;
-      ownerSlide = slide ? slide.id : null;
-      check();
-    }).observe(answer, { childList: true, subtree: true, characterData: true });
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (token !== generation) return;
+        ready = true;
+        progress.textContent = "完整解析已就绪";
+        check();
+      }));
+    });
     document.addEventListener("visibilitychange", () => { stop(); check(); });
-    window.addEventListener("resize", () => { stop(); check(); });
+    window.addEventListener("resize", () => { stop(); done = false; check(); });
     window.addEventListener("pagehide", stop);
     setInterval(check, 500);
     check();
