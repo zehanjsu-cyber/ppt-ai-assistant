@@ -48,6 +48,12 @@
       <input id="scrollSeconds" type="number" min="5" max="120" step="1" value="15">
       <button id="saveScroll" class="secondary">保存滚动设置</button>
       <p id="scrollStatus" class="hint">默认停留 15 秒，平滑滚到下一屏；末尾自动停止。</p>
+      <hr>
+      <label class="check-label"><input id="voiceEnabled" type="checkbox">放映时语音讲解（默认关闭）</label>
+      <label for="voiceRate">语速</label>
+      <select id="voiceRate"><option value="0.85">稍慢</option><option value="1" selected>正常</option><option value="1.15">稍快</option></select>
+      <div class="row"><button id="saveVoice" class="secondary">保存语音设置</button><button id="testVoice" class="secondary">课前试听</button><button id="stopVoice" class="quiet">停止朗读</button></div>
+      <p id="voiceStatus" class="hint">使用本机中文语音。请课前试听确认音响；进入放映后自动发声仍可能受 PowerPoint 限制。</p>
     </section>
 
     <button id="explainButton" class="primary" disabled>宏观 AI 助教讲解本题</button>
@@ -64,6 +70,7 @@
     </div>
   </main>
   <script src="app.js?v=5"></script>
-  <script src="scroll.js?v=2"></script>
+  <script src="voice.js?v=1"></script>
+  <script src="scroll.js?v=3"></script>
 </body>
 </html>

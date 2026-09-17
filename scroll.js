@@ -5,6 +5,22 @@
   let ownerSlide = null, visibleSlide = null, timer = null;
   let checking = false, generation = 0, ready = false, done = false, phase = "idle";
   let progress;
+  let fallback = null, fallbackHeight = 0, fallbackTop = 0;
+  const position = () => fallback ? fallbackTop : answer.scrollTop;
+  const height = () => fallback ? fallbackHeight : answer.scrollHeight;
+  function moveFallback(top) {
+    fallbackTop = top;
+    fallback.style.transform = "translateY(-" + top + "px)";
+  }
+  function resetPosition() {
+    if (fallback) {
+      const text = fallback.textContent;
+      fallback = null; fallbackHeight = 0; fallbackTop = 0;
+      answer.textContent = text;
+      answer.style.overflowY = "auto";
+    }
+    answer.scrollTop = 0;
+  }
 
   function options() {
     const saved = Office.context.document.settings.get(SETTINGS_KEY) || {};
@@ -24,8 +40,8 @@
   }
 
   function schedule() {
-    if (phase !== "idle" || !ready || done || document.hidden || !options().enabled || !visibleSlide || visibleSlide !== ownerSlide || answer.clientHeight <= 0) return;
-    const atEnd = answer.scrollHeight <= answer.clientHeight + answer.scrollTop + 2;
+    if (phase !== "idle" || !ready || done || window.pptVoiceReading || !options().enabled || !visibleSlide || visibleSlide !== ownerSlide || answer.clientHeight <= 0) return;
+    const atEnd = height() <= answer.clientHeight + position() + 2;
     progress.textContent = atEnd ? "最后一屏 · 阅读后停止" : "完整解析 · 每屏停留 " + options().seconds + " 秒";
     const token = generation;
     phase = "dwell";
@@ -33,17 +49,23 @@
       phase = "checking";
       const [view, slide] = await Promise.all([getActiveView(), getCurrentSlideInfo()]);
       if (token !== generation) return;
-      if (document.hidden || view !== "read" || !slide || slide.id !== ownerSlide || !options().enabled) { stop(); return; }
-      if (answer.scrollHeight <= answer.clientHeight + answer.scrollTop + 2) {
+      if (view !== "read" || !slide || slide.id !== ownerSlide || !options().enabled || window.pptVoiceReading) { stop(); return; }
+      if (height() <= answer.clientHeight + position() + 2) {
         done = true; timer = null; phase = "idle";
         progress.textContent = "全部解析已展示";
         return;
       }
       phase = "moving";
       const overlap = Math.min(60, answer.clientHeight * 0.15);
+      const before = position();
+      const target = Math.min(height() - answer.clientHeight,
+          position() + Math.max(1, answer.clientHeight - overlap)),
+        movementToken = generation;
+      if (fallback) {
+        moveFallback(target); phase = "idle"; timer = null; schedule(); return;
+      }
       answer.scrollTo({
-        top: Math.min(answer.scrollHeight - answer.clientHeight,
-          answer.scrollTop + Math.max(1, answer.clientHeight - overlap)),
+        top: target,
         behavior: "smooth",
       });
       // Start a fresh dwell only after movement has settled, not after a fixed delay.
@@ -52,7 +74,24 @@
         if (token !== generation) return;
         stable = Math.abs(answer.scrollTop - previous) < .5 ? stable + 1 : 0;
         previous = answer.scrollTop;
-        if (stable >= 4) { timer = null; phase = "idle"; schedule(); }
+        if (stable >= 4) {
+          // Some embedded WebViews ignore smooth scrolling: retry directly.
+          if (target > before + 2 && answer.scrollTop <= before + 2 && movementToken === generation) {
+            answer.scrollTop = target;
+            if (answer.scrollTop <= before + 2) {
+              // If the host blocks both forms of scrolling, move text itself.
+              fallbackHeight = answer.scrollHeight;
+              fallback = document.createElement("div");
+              fallback.textContent = answer.textContent;
+              answer.replaceChildren(fallback);
+              answer.style.overflowY = "hidden";
+              answer.scrollTop = 0;
+              moveFallback(target);
+              progress.textContent = "已切换自动分屏展示";
+            }
+          }
+          timer = null; phase = "idle"; schedule();
+        }
         else timer = setTimeout(settle, 100);
       }
       timer = setTimeout(settle, 100);
@@ -66,12 +105,14 @@
       const token = generation;
       const [view, slide] = await Promise.all([getActiveView(), getCurrentSlideInfo()]);
       if (token !== generation) return;
-      const current = view === "read" && slide && !document.hidden ? slide.id : null;
+      // Presenter View may background this WebView while projecting it.
+      // Office's view/slide, not browser focus or visibility, is authoritative.
+      const current = view === "read" && slide ? slide.id : null;
       document.body.classList.toggle("show-view", view === "read");
       if (current !== visibleSlide) {
         stop();
         visibleSlide = current;
-        answer.scrollTop = 0;
+        resetPosition();
         done = false;
       }
       schedule();
@@ -114,20 +155,21 @@
     });
     document.addEventListener("answer-ready", (event) => {
       stop();
-      ready = false; done = false;
+      ready = true; done = false;
       ownerSlide = event.detail.slideId;
+      // app.js has replaced the previous answer, including fallback markup.
+      fallback = null; fallbackHeight = 0; fallbackTop = 0;
+      answer.style.overflowY = "auto";
       answer.scrollTop = 0;
-      const token = generation;
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (token !== generation) return;
-        ready = true;
-        progress.textContent = "完整解析已就绪";
-        check();
-      }));
+      // The non-streaming response is complete. Layout is measured when the
+      // dwell starts; never wait on animation frames that a host can suspend.
+      progress.textContent = "完整解析已就绪";
+      check();
     });
     document.addEventListener("visibilitychange", () => { stop(); check(); });
     window.addEventListener("resize", () => { stop(); done = false; check(); });
     window.addEventListener("pagehide", stop);
+    document.addEventListener("voice-state", () => { stop(); check(); });
     setInterval(check, 500);
     check();
   });
