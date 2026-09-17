@@ -52,6 +52,10 @@
       <label class="check-label"><input id="voiceEnabled" type="checkbox">放映时语音讲解（默认关闭）</label>
       <label for="voiceRate">语速</label>
       <select id="voiceRate"><option value="0.85">稍慢</option><option value="1" selected>正常</option><option value="1.15">稍快</option></select>
+      <label for="voiceSelect">中文声音（选择后可直接试听）</label>
+      <select id="voiceSelect"><option value="">正在获取本机声音…</option></select>
+      <label for="voiceRepeat">朗读次数</label>
+      <select id="voiceRepeat"><option value="1">每次进入读一遍</option><option value="2">读两遍，间隔 5 秒</option><option value="0">循环朗读，翻页或停止后结束</option></select>
       <div class="row"><button id="saveVoice" class="secondary">保存语音设置</button><button id="testVoice" class="secondary">课前试听</button><button id="stopVoice" class="quiet">停止朗读</button></div>
       <p id="voiceStatus" class="hint">使用本机中文语音。请课前试听确认音响；进入放映后自动发声仍可能受 PowerPoint 限制。</p>
     </section>
@@ -60,7 +64,7 @@
     <p id="status" class="status">正在连接 PowerPoint…</p>
 
     <section class="answer-card">
-      <div class="answer-title">本题解析 <span id="readingStatus" aria-live="polite">等待讲解</span></div>
+      <div class="answer-title">本题解析 <span id="readingStatus" aria-live="polite">等待讲解</span><button id="replayVoice" class="secondary" disabled style="padding:4px 10px;font-size:12px">重听</button></div>
       <div id="answer" class="answer">点击上方按钮后，答案会显示在这里。</div>
     </section>
 
@@ -70,7 +74,7 @@
     </div>
   </main>
   <script src="app.js?v=5"></script>
-  <script src="voice.js?v=1"></script>
+  <script src="voice.js?v=2"></script>
   <script src="scroll.js?v=3"></script>
 </body>
 </html>
