@@ -5,6 +5,19 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>宏观经济学 AI 助教</title>
   <link rel="stylesheet" href="styles.css">
+  <style>
+    html, body { height: 100%; }
+    main { height: 100%; display: flex; flex-direction: column; overflow: auto; }
+    header, .primary, .status, .followup { flex-shrink: 0; }
+    .answer-card { flex: 1; min-height: 100px; display: flex; flex-direction: column; }
+    .answer { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+    .panel { flex-shrink: 0; }
+    .panel .check-label { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+    .panel input[type="checkbox"] { width: auto; }
+    #scrollSeconds { width: 90px; }
+    .show-view main { overflow: hidden; }
+    .show-view #settings, .show-view .followup, .show-view header p { display: none; }
+  </style>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
 </head>
 <body>
@@ -28,6 +41,12 @@
       <hr>
       <button id="toggleAuto" class="secondary">将本页设为自动讲解页</button>
       <p id="autoStatus" class="hint">备课时在需要自动讲解的页面开启。</p>
+      <hr>
+      <label class="check-label"><input id="autoScroll" type="checkbox" checked>放映时自动滚动讲解</label>
+      <label for="scrollSeconds">每屏停留时间（秒）</label>
+      <input id="scrollSeconds" type="number" min="5" max="120" step="1" value="15">
+      <button id="saveScroll" class="secondary">保存滚动设置</button>
+      <p id="scrollStatus" class="hint">默认停留 15 秒，平滑滚到下一屏；末尾自动停止。</p>
     </section>
 
     <button id="explainButton" class="primary" disabled>宏观 AI 助教讲解本题</button>
@@ -44,5 +63,6 @@
     </div>
   </main>
   <script src="app.js?v=4"></script>
+  <script src="scroll.js?v=1"></script>
 </body>
 </html>
