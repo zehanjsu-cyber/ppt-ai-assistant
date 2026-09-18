@@ -4,6 +4,7 @@
   let answer, hint, enabled, rate, owner = null, token = 0, watchdog = null, polling = false;
   let completedText = "", autoPlayed = false, previewing = false, visibleOwner = false;
   let voiceSelect, repeatSelect, replayButton;
+  let readMisses = 0, retryAt = 0;
   const leaseKey = "ppt-ai-speech-lease", instance = Math.random().toString(36).slice(2);
   function lease(acquire) {
     try {
@@ -27,7 +28,7 @@
   function stop(message) {
     token++;
     clearTimeout(watchdog);
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    if (window.pptVoiceReading && window.speechSynthesis) window.speechSynthesis.cancel();
     lease(false);
     previewing = false;
     state(false);
@@ -85,29 +86,36 @@
     if (current.trim()) result.push(current);
     return result;
   }
-  async function play(text, preview = false) {
-    stop();
-    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) { hint.textContent = "当前 PowerPoint 不支持本机语音，继续使用文字讲解。"; return; }
+  async function play(text, preview = false, direct = false) {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) { hint.textContent = "当前 PowerPoint 不支持本机语音，继续使用文字讲解。"; return true; }
     const voices = availableVoices();
     const selection = preview ? voiceSelect.value : options().voice;
     const voice = voices.find(v => voiceId(v) === selection) || voices.find(v => /^zh[-_]CN/i.test(v.lang) && v.default) || voices.find(v => /^zh[-_]CN/i.test(v.lang)) || voices[0];
-    if (!voice) { hint.textContent = "没有检测到中文语音，请检查 Mac 系统语音；文字展示不受影响。"; return; }
+    if (!voice) { hint.textContent = "正在等待本机中文声音加载；也可点击“播放 / 重听”重试。"; retryAt = Date.now() + 1000; return false; }
     const parts = chunks(text).filter(part => clean(part));
     let searchFrom = 0;
     const offsets = parts.map(part => { const at = text.indexOf(part, searchFrom); searchFrom = Math.max(searchFrom, at + part.length); return Math.max(0, at); });
-    if (!parts.length) return;
-    if (!lease(true)) { hint.textContent = "已有另一个助教窗口正在朗读，本窗口继续文字展示。"; return; }
+    if (!parts.length) return true;
+    if (!lease(true)) { hint.textContent = "已有另一个助教窗口正在朗读，本窗口继续文字展示。"; retryAt = Date.now() + 3000; return false; }
+    stop(); lease(true);
     previewing = preview;
     const run = token;
-    let index = 0, round = 1;
+    let index = 0, round = 1, first = true;
     state(true);
     async function next() {
       if (run !== token) return;
-      if (!preview) {
+      if (!preview && !(direct && first)) {
         const [view, slide] = await Promise.all([getActiveView(), getCurrentSlideInfo()]);
         if (run !== token) return;
+        if (!view || (view === "read" && !slide)) {
+          watchdog = setTimeout(() => { if (run === token) next(); }, 500);
+          if (++readMisses >= 4) stop("暂时无法确认放映页，语音暂停；请点“播放 / 重听”重试。");
+          return;
+        }
+        readMisses = 0;
         if (view !== "read" || slide?.id !== owner) { stop("已离开讲解页，语音停止。"); return; }
       }
+      first = false;
       if (index >= parts.length) {
         if (!preview && (options().repeat === 0 || round < options().repeat)) {
           round++; index = 0;
@@ -144,35 +152,38 @@
       };
       utterance.onerror = () => { if (run === token) stop("语音播放受限或失败，已恢复自动文字展示。请课前试听。 "); };
       watchdog = setTimeout(() => { if (run === token) stop("语音未启动，已恢复自动文字展示。请在当前放映环境测试。 "); }, 7000);
-      try { window.speechSynthesis.speak(utterance); }
+      try { window.speechSynthesis.resume?.(); window.speechSynthesis.speak(utterance); }
       catch (_) { stop("语音不可用，已恢复自动文字展示。"); }
     }
     next();
+    return true;
   }
   Office.onReady(info => {
     if (info.host !== Office.HostType.PowerPoint) return;
-    answer = document.getElementById("answer"); hint = document.getElementById("voiceStatus");
+    answer = document.getElementById("answer");
+    const settingsHint = document.getElementById("voiceStatus"), liveHint = document.getElementById("voiceLiveStatus");
+    hint = { get textContent() { return settingsHint.textContent; }, set textContent(value) { settingsHint.textContent = value; if (liveHint) liveHint.textContent = value; } };
     enabled = document.getElementById("voiceEnabled"); rate = document.getElementById("voiceRate");
     voiceSelect = document.getElementById("voiceSelect"); repeatSelect = document.getElementById("voiceRepeat");
     replayButton = document.getElementById("replayVoice");
     enabled.checked = options().enabled; rate.value = String(options().rate);
     repeatSelect.value = String(options().repeat); refreshVoices();
     window.speechSynthesis?.addEventListener?.("voiceschanged", refreshVoices);
-    document.getElementById("saveVoice").addEventListener("click", () => {
+    function saveOptions() {
       Office.context.document.settings.set(KEY, { enabled: enabled.checked, rate: Number(rate.value), voice: voiceSelect.value, repeat: Number(repeatSelect.value) });
       Office.context.document.settings.saveAsync(result => {
-        stop(result.status === Office.AsyncResultStatus.Succeeded ? "语音设置已保存。请课前试听。" : "语音设置保存失败，请重试。");
+        stop(result.status === Office.AsyncResultStatus.Succeeded ? (enabled.checked ? "语音已开启：放映中自动朗读；无声音时点“播放 / 重听”。" : "语音已关闭。") : "语音设置保存失败，请重试。");
+        autoPlayed = false; retryAt = 0;
       });
-    });
-    document.getElementById("testVoice").addEventListener("click", () => play("你好，我是宏观经济学 AI 助教。请确认教室音响能够听到这段声音。", true));
+    }
+    document.getElementById("saveVoice").addEventListener("click", saveOptions);
+    enabled.addEventListener("change", saveOptions);
+    document.getElementById("testVoice").addEventListener("click", () => play("你好，我是宏观经济学 AI 助教。请确认教室音响能够听到这段声音。", true, true));
     document.getElementById("stopVoice").addEventListener("click", () => stop("语音已停止。"));
-    replayButton.addEventListener("click", async () => {
+    replayButton.addEventListener("click", () => {
       if (!completedText) return;
-      const run = token;
-      const [view, slide] = await Promise.all([getActiveView(), getCurrentSlideInfo()]);
-      if (run !== token) return;
-      if (view === "read" && slide?.id !== owner) return;
-      autoPlayed = true; answer.scrollTop = 0; play(completedText, view !== "read");
+      // Submit speech inside the click handler, before any await loses activation.
+      autoPlayed = true; answer.scrollTop = 0; play(completedText, !visibleOwner, true);
     });
     document.addEventListener("answer-pending", () => { stop(); completedText = ""; autoPlayed = false; replayButton.disabled = true; });
     document.addEventListener("answer-ready", event => { owner = event.detail.slideId; completedText = answer.textContent; autoPlayed = false; replayButton.disabled = false; });
@@ -184,6 +195,11 @@
         const [view, slide] = await Promise.all([getActiveView(), getCurrentSlideInfo()]);
         if (window.pptVoiceReading && !lease(true)) { stop("另一助教窗口已接管语音。"); return; }
         if (previewing) return;
+        if (!view || (view === "read" && !slide)) {
+          if (++readMisses >= 4 && window.pptVoiceReading) stop("暂时无法确认放映页，语音暂停；请点“播放 / 重听”重试。");
+          return;
+        }
+        readMisses = 0;
         const onOwner = view === "read" && slide?.id === owner;
         if (!onOwner) {
           if (visibleOwner) autoPlayed = false;
@@ -191,7 +207,7 @@
           if (window.pptVoiceReading) stop("已离开放映讲解页，语音停止。"); return;
         }
         visibleOwner = true;
-        if (completedText && options().enabled && !autoPlayed) { autoPlayed = true; play(completedText); }
+        if (completedText && options().enabled && !autoPlayed && Date.now() >= retryAt) { autoPlayed = await play(completedText) === true; }
       } finally { polling = false; }
     }, 500);
     window.addEventListener("pagehide", () => stop());
