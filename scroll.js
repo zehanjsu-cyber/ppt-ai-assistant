@@ -6,6 +6,7 @@
   let checking = false, generation = 0, ready = false, done = false, phase = "idle";
   let progress;
   let fallback = null, fallbackHeight = 0, fallbackTop = 0;
+  let misses = 0, voiceFinished = false;
   const position = () => fallback ? fallbackTop : answer.scrollTop;
   const height = () => fallback ? fallbackHeight : answer.scrollHeight;
   function moveFallback(top) {
@@ -20,6 +21,35 @@
       answer.style.overflowY = "auto";
     }
     answer.scrollTop = 0;
+  }
+  function moveTo(top) {
+    const target = Math.max(0, Math.min(height() - answer.clientHeight, top));
+    if (fallback) return moveFallback(target);
+    answer.scrollTop = target;
+    if (Math.abs(answer.scrollTop - target) > 2) {
+      fallbackHeight = answer.scrollHeight;
+      fallback = document.createElement("div");
+      fallback.textContent = answer.textContent;
+      answer.replaceChildren(fallback);
+      answer.style.overflowY = "hidden"; answer.scrollTop = 0;
+      moveFallback(target);
+    }
+  }
+  function reveal(offset, reset) {
+    if (!ready || visibleSlide !== ownerSlide) return;
+    if (reset) moveTo(0);
+    try {
+      const textNode = fallback ? fallback.firstChild : answer.firstChild;
+      if (!textNode || textNode.nodeType !== 3) return;
+      const range = document.createRange();
+      const start = Math.max(0, Math.min(offset, textNode.length - 1));
+      range.setStart(textNode, start); range.setEnd(textNode, start + 1);
+      const rect = range.getBoundingClientRect(), viewport = answer.getBoundingClientRect();
+      if (rect.top < viewport.top || rect.bottom > viewport.bottom - 20) {
+        moveTo(position() + rect.top - viewport.top - 8);
+      }
+      progress.textContent = "语音同步 · 跟随正在朗读的内容";
+    } catch (_) { /* Keep speech running if host geometry is unavailable. */ }
   }
 
   function options() {
@@ -40,7 +70,7 @@
   }
 
   function schedule() {
-    if (phase !== "idle" || !ready || done || window.pptVoiceReading || !options().enabled || !visibleSlide || visibleSlide !== ownerSlide || answer.clientHeight <= 0) return;
+    if (phase !== "idle" || !ready || done || voiceFinished || window.pptVoiceReading || !options().enabled || !visibleSlide || visibleSlide !== ownerSlide || answer.clientHeight <= 0) return;
     const atEnd = height() <= answer.clientHeight + position() + 2;
     progress.textContent = atEnd ? "最后一屏 · 阅读后停止" : "完整解析 · 每屏停留 " + options().seconds + " 秒";
     const token = generation;
@@ -69,12 +99,12 @@
         behavior: "smooth",
       });
       // Start a fresh dwell only after movement has settled, not after a fixed delay.
-      let previous = -1, stable = 0;
+      let previous = -1, stable = 0, attempts = 0;
       function settle() {
         if (token !== generation) return;
         stable = Math.abs(answer.scrollTop - previous) < .5 ? stable + 1 : 0;
         previous = answer.scrollTop;
-        if (stable >= 4) {
+        if (stable >= 4 || ++attempts >= 20) {
           // Some embedded WebViews ignore smooth scrolling: retry directly.
           if (target > before + 2 && answer.scrollTop <= before + 2 && movementToken === generation) {
             answer.scrollTop = target;
@@ -107,6 +137,12 @@
       if (token !== generation) return;
       // Presenter View may background this WebView while projecting it.
       // Office's view/slide, not browser focus or visibility, is authoritative.
+      if (!view || (view === "read" && !slide)) {
+        // A transient Office read failure must not restart the dwell or reset text.
+        if (++misses >= 4) stop();
+        return;
+      }
+      misses = 0;
       const current = view === "read" && slide ? slide.id : null;
       document.body.classList.toggle("show-view", view === "read");
       if (current !== visibleSlide) {
@@ -114,6 +150,7 @@
         visibleSlide = current;
         resetPosition();
         done = false;
+        voiceFinished = false;
       }
       schedule();
     } finally {
@@ -147,7 +184,7 @@
       });
     });
     document.addEventListener("answer-pending", () => {
-      stop(); ready = false;
+      stop(); ready = false; voiceFinished = false;
       progress.textContent = "正在准备完整解析…";
     });
     document.addEventListener("answer-failed", () => {
@@ -155,7 +192,7 @@
     });
     document.addEventListener("answer-ready", (event) => {
       stop();
-      ready = true; done = false;
+      ready = true; done = false; voiceFinished = false;
       ownerSlide = event.detail.slideId;
       // app.js has replaced the previous answer, including fallback markup.
       fallback = null; fallbackHeight = 0; fallbackTop = 0;
@@ -166,10 +203,20 @@
       progress.textContent = "完整解析已就绪";
       check();
     });
-    document.addEventListener("visibilitychange", () => { stop(); check(); });
-    window.addEventListener("resize", () => { stop(); done = false; check(); });
+    document.addEventListener("visibilitychange", check);
+    let lastHeight = answer.clientHeight;
+    window.addEventListener("resize", () => {
+      if (answer.clientHeight !== lastHeight) { lastHeight = answer.clientHeight; stop(); done = false; }
+      check();
+    });
     window.addEventListener("pagehide", stop);
     document.addEventListener("voice-state", () => { stop(); check(); });
+    document.addEventListener("voice-progress", event => {
+      voiceFinished = false; stop(); reveal(event.detail.offset, event.detail.reset);
+    });
+    document.addEventListener("voice-complete", () => {
+      voiceFinished = true; stop(); progress.textContent = "语音及解析展示完成";
+    });
     setInterval(check, 500);
     check();
   });

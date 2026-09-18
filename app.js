@@ -238,6 +238,7 @@ async function explainCurrentSlide() {
     isBusy = false;
     els.explain.disabled = false;
     els.followupButton.disabled = conversation.length === 0;
+    els.followupButton.textContent = "发送";
   }
 }
 
@@ -268,17 +269,23 @@ async function askFollowup() {
     isBusy = false;
     els.explain.disabled = false;
     els.followupButton.disabled = conversation.length === 0;
+    els.followupButton.textContent = "发送";
   }
 }
 
 function setBusy(disabled, message) {
   els.explain.disabled = disabled;
   els.followupButton.disabled = disabled;
+  els.followupButton.textContent = disabled ? "请稍候…" : "发送";
   setStatus(message, false);
 }
 
 async function callYuanqi(key, messages) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90000);
+  try {
   const response = await fetch(API_URL, {
+    signal: controller.signal,
     method: "POST",
     headers: {
       "Authorization": `Bearer ${key}`,
@@ -297,4 +304,8 @@ async function callYuanqi(key, messages) {
   const answer = payload?.choices?.[0]?.message?.content;
   if (!answer) throw new Error("腾讯元器没有返回可显示的答案。");
   return typeof answer === "string" ? answer : answer.map((part) => part.text || "").join("");
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("回答等待超时，请再次发送；追问内容已保留。");
+    throw error;
+  } finally { clearTimeout(timeout); }
 }

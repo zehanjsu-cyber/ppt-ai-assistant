@@ -93,6 +93,8 @@
     const voice = voices.find(v => voiceId(v) === selection) || voices.find(v => /^zh[-_]CN/i.test(v.lang) && v.default) || voices.find(v => /^zh[-_]CN/i.test(v.lang)) || voices[0];
     if (!voice) { hint.textContent = "没有检测到中文语音，请检查 Mac 系统语音；文字展示不受影响。"; return; }
     const parts = chunks(text).filter(part => clean(part));
+    let searchFrom = 0;
+    const offsets = parts.map(part => { const at = text.indexOf(part, searchFrom); searchFrom = Math.max(searchFrom, at + part.length); return Math.max(0, at); });
     if (!parts.length) return;
     if (!lease(true)) { hint.textContent = "已有另一个助教窗口正在朗读，本窗口继续文字展示。"; return; }
     previewing = preview;
@@ -113,6 +115,7 @@
           watchdog = setTimeout(() => { if (run === token) { answer.scrollTop = 0; next(); } }, 5000);
           return;
         }
+        if (!preview) document.dispatchEvent(new Event("voice-complete"));
         stop("语音讲解完成。可点“重听”，或翻走后返回自动重听。"); return;
       }
       const utterance = new window.SpeechSynthesisUtterance(clean(parts[index]));
@@ -122,19 +125,16 @@
         if (run !== token) return;
         clearTimeout(watchdog);
         hint.textContent = "正在朗读 " + (index + 1) + " / " + parts.length + " 段";
-        // Reveal the current sentence in the complete, selectable answer.
-        try { if (!preview) {
-          const needle = parts[index].trim().replace(/[。！？；]$/, "");
-          const offset = answer.textContent.indexOf(needle);
-          const textNode = answer.firstChild;
-          if (offset >= 0 && textNode?.nodeType === 3) {
-            const range = document.createRange();
-            range.setStart(textNode, offset); range.setEnd(textNode, Math.min(offset + needle.length, textNode.length));
-            const rect = range.getBoundingClientRect(), viewport = answer.getBoundingClientRect();
-            answer.scrollTop += rect.top - viewport.top - 8;
-          }
-        } } catch (_) { /* Speech must continue even if text geometry is unavailable. */ }
+        if (!preview) document.dispatchEvent(new CustomEvent("voice-progress", { detail: { offset: offsets[index], reset: index === 0 } }));
         watchdog = setTimeout(() => { if (run === token) stop("语音超时，已恢复自动文字展示。"); }, 120000);
+      };
+      utterance.onboundary = event => {
+        if (run !== token || preview || !Number.isInteger(event.charIndex)) return;
+        // Translate cleaned speech positions back to the original displayed text.
+        const raw = parts[index];
+        let low = 0, high = raw.length;
+        while (low < high) { const mid = (low + high) >> 1; if (clean(raw.slice(0, mid)).length < event.charIndex) low = mid + 1; else high = mid; }
+        document.dispatchEvent(new CustomEvent("voice-progress", { detail: { offset: offsets[index] + low, reset: false } }));
       };
       utterance.onend = () => {
         if (run !== token) return;
