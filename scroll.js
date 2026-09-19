@@ -37,19 +37,19 @@
     }
   }
   function reveal(offset, reset) {
-    if (!ready || visibleSlide !== ownerSlide) return;
+    // The speech module only reports progress for the slide it is reading.
+    // Office may confirm that slide late in Presenter View, so do not discard
+    // speech progress while the voice is already active.
+    if (!ready || (visibleSlide !== ownerSlide && !window.pptVoiceReading)) return;
     if (reset) moveTo(0);
     try {
       const textNode = fallback ? fallback.firstChild : answer.firstChild;
-      if (!textNode || textNode.nodeType !== 3) return;
-      const range = document.createRange();
-      const start = Math.max(0, Math.min(offset, textNode.length - 1));
-      range.setStart(textNode, start); range.setEnd(textNode, start + 1);
-      const rect = range.getBoundingClientRect(), viewport = answer.getBoundingClientRect();
-      const followLine = viewport.top + answer.clientHeight * 0.60;
-      if (rect.top < viewport.top || rect.bottom > followLine) {
-        moveTo(position() + rect.top - viewport.top - answer.clientHeight * 0.50);
-      }
+      const textLength = textNode?.nodeType === 3 ? textNode.length : answer.textContent.length;
+      if (textLength <= 0) return;
+      // PowerPoint's presentation WebView can return stale or empty Range
+      // rectangles. Text progress is reliable even when geometry is not.
+      const fraction = Math.max(0, Math.min(1, offset / textLength));
+      moveTo((height() - answer.clientHeight) * fraction);
       progress.textContent = "语音同步 · 跟随正在朗读的内容";
     } catch (_) { /* Keep speech running if host geometry is unavailable. */ }
   }
