@@ -45,6 +45,10 @@
       <button id="toggleAuto" class="secondary">将本页设为自动讲解页</button>
       <p id="autoStatus" class="hint">备课时在需要自动讲解的页面开启。</p>
       <hr>
+      <label class="check-label"><input id="rainStatsEnabled" type="checkbox">根据雨课堂作答情况讲解（默认关闭）</label>
+      <p id="rainStatsStatus" class="hint">开启后，读取刚刚关闭的作答情况小窗口；未识别到时仍按原方式讲题。</p>
+      <button id="checkRainStats" class="secondary" type="button">检查作答情况连接</button>
+      <hr>
       <label class="check-label"><input id="autoScroll" type="checkbox" checked>放映时自动滚动讲解</label>
       <label for="scrollSeconds">每屏停留时间（秒）</label>
       <input id="scrollSeconds" type="number" min="5" max="120" step="1" value="15">
@@ -78,7 +82,7 @@
       <button id="followupButton" class="secondary" type="button" disabled>发送</button>
     </div>
   </main>
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
   <script src="voice.js?v=4"></script>
   <script src="scroll.js?v=4"></script>
 </body>

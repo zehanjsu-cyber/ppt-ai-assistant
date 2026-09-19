@@ -2,6 +2,9 @@ const API_URL = "https://yuanqi.tencent.com/openapi/v1/agent/chat/completions";
 const ASSISTANT_ID = "2096407988983757888";
 const STORAGE_KEY = "yuanqi-app-key";
 const AUTO_SLIDES_KEY = "ppt-ai-auto-slide-ids";
+const RAIN_STATS_ENABLED_KEY = "ppt-ai-rain-stats-enabled";
+const RAIN_STATS_URL = "http://127.0.0.1:19789/latest";
+const RAIN_STATS_MAX_AGE_MS = 10 * 60 * 1000;
 
 const els = {};
 let conversation = [];
@@ -22,6 +25,9 @@ Office.onReady((info) => {
     clearKey: document.getElementById("clearKey"),
     toggleAuto: document.getElementById("toggleAuto"),
     autoStatus: document.getElementById("autoStatus"),
+    rainStatsEnabled: document.getElementById("rainStatsEnabled"),
+    rainStatsStatus: document.getElementById("rainStatsStatus"),
+    checkRainStats: document.getElementById("checkRainStats"),
     followupInput: document.getElementById("followupInput"),
     followupButton: document.getElementById("followupButton"),
     followupQuestion: document.getElementById("followupQuestion"),
@@ -31,6 +37,9 @@ Office.onReady((info) => {
   els.saveKey.addEventListener("click", saveKey);
   els.clearKey.addEventListener("click", clearKey);
   els.toggleAuto.addEventListener("click", toggleCurrentSlideAuto);
+  els.rainStatsEnabled.checked = localStorage.getItem(RAIN_STATS_ENABLED_KEY) === "1";
+  els.rainStatsEnabled.addEventListener("change", saveRainStatsSetting);
+  els.checkRainStats.addEventListener("click", checkRainStatsConnection);
   els.explain.addEventListener("click", explainCurrentSlide);
   els.followupButton.addEventListener("click", askFollowup);
   els.followupInput.addEventListener("keydown", (event) => {
@@ -59,6 +68,71 @@ Office.onReady((info) => {
 function setStatus(message, isError = false) {
   els.status.textContent = message;
   els.status.classList.toggle("error", isError);
+}
+
+function saveRainStatsSetting() {
+  localStorage.setItem(RAIN_STATS_ENABLED_KEY, els.rainStatsEnabled.checked ? "1" : "0");
+  els.rainStatsStatus.textContent = els.rainStatsEnabled.checked
+    ? "已开启。讲解时会优先使用最近一次有效作答分布。"
+    : "已关闭。AI 仅根据当前 PPT 题目讲解。";
+}
+
+function normalizeRainStats(payload) {
+  if (!payload || !Array.isArray(payload.options) || payload.options.length < 2) return null;
+  const capturedAt = Date.parse(payload.captured_at || "");
+  if (!Number.isFinite(capturedAt) || Date.now() - capturedAt > RAIN_STATS_MAX_AGE_MS) return null;
+  const options = payload.options
+    .map((item) => ({
+      label: String(item.label || "").trim().toUpperCase(),
+      count: Number.isFinite(Number(item.count)) ? Number(item.count) : null,
+      percent: Number.isFinite(Number(item.percent)) ? Number(item.percent) : null,
+      correct: item.correct === true,
+    }))
+    .filter((item) => /^[A-Z]$/.test(item.label));
+  if (options.length < 2) return null;
+  return {
+    capturedAt: new Date(capturedAt),
+    submitted: Number.isFinite(Number(payload.submitted)) ? Number(payload.submitted) : null,
+    options,
+  };
+}
+
+async function getRainStats() {
+  if (!els.rainStatsEnabled?.checked) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1200);
+  try {
+    const response = await fetch(RAIN_STATS_URL, { cache: "no-store", signal: controller.signal });
+    if (!response.ok) return null;
+    return normalizeRainStats(await response.json());
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function formatRainStats(stats) {
+  const rows = stats.options.map((item) => {
+    const details = [];
+    if (item.count !== null) details.push(`${item.count}人`);
+    if (item.percent !== null) details.push(`${item.percent}%`);
+    if (item.correct) details.push("雨课堂标记为正确选项");
+    return `${item.label}：${details.join("，") || "已识别"}`;
+  });
+  if (stats.submitted !== null) rows.unshift(`提交人数：${stats.submitted}人`);
+  return rows.join("\n");
+}
+
+async function checkRainStatsConnection() {
+  const stats = await getRainStats();
+  if (!els.rainStatsEnabled.checked) {
+    els.rainStatsStatus.textContent = "功能当前关闭；打开开关后再检查。";
+  } else if (!stats) {
+    els.rainStatsStatus.textContent = "尚未取得有效分布。请确认本机识别助手已运行，并打开一次作答情况窗口。";
+  } else {
+    els.rainStatsStatus.textContent = `已连接：${formatRainStats(stats).replace(/\n/g, "；")}`;
+  }
 }
 
 function saveKey() {
@@ -220,7 +294,11 @@ async function explainCurrentSlide() {
     const question = await readCurrentSlideText(sourceSlide);
     if (!question) throw new Error("当前页没有读取到文字。图片题请把题目文字放在一个文本框中。");
 
-    const prompt = `你是大学宏观经济学课堂的AI课程助教。请讲解下面的题目：\n\n${question}\n\n要求：先明确给出正确答案；再解释核心原理；有选项时逐项判断；不虚构题目中没有的数据；控制在课堂60—90秒可讲完；最后用一句话总结考点。`;
+    const rainStats = await getRainStats();
+    const statsContext = rainStats
+      ? `\n\n这是刚才雨课堂的全班汇总数据：\n${formatRainStats(rainStats)}\n\n请先讲正确答案和核心原理，再重点解释人数最多的错误选项为什么有迷惑性。只能把分布表述为“可能反映的误区”，不能断言学生真实想法，也不要提及任何学生个人。`
+      : "";
+    const prompt = `你是大学宏观经济学课堂的AI课程助教。请讲解下面的题目：\n\n${question}${statsContext}\n\n要求：先明确给出正确答案；再解释核心原理；有选项时逐项判断；不虚构题目中没有的数据；控制在课堂60—90秒可讲完；最后用一句话总结考点。`;
     conversation = [{ role: "user", content: [{ type: "text", text: prompt }] }];
     const answer = await callYuanqi(key, conversation);
     conversation.push({ role: "assistant", content: [{ type: "text", text: answer }] });
@@ -230,7 +308,7 @@ async function explainCurrentSlide() {
     answerSlideId = sourceSlide.id;
     document.dispatchEvent(new CustomEvent("answer-ready", { detail: { slideId: answerSlideId } }));
     els.followupButton.disabled = false;
-    setStatus("讲解完成。", false);
+    setStatus(rainStats ? "已根据雨课堂作答分布完成讲解。" : "讲解完成。", false);
   } catch (error) {
     document.dispatchEvent(new Event("answer-failed"));
     setStatus(error.message || String(error), true);
