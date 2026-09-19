@@ -5,6 +5,7 @@ const AUTO_SLIDES_KEY = "ppt-ai-auto-slide-ids";
 const RAIN_STATS_ENABLED_KEY = "ppt-ai-rain-stats-enabled";
 const RAIN_STATS_URL = "http://127.0.0.1:19789/latest";
 const RAIN_STATS_MAX_AGE_MS = 10 * 60 * 1000;
+const RAIN_STATS_TIMEOUT_MS = 5000;
 
 const els = {};
 let conversation = [];
@@ -92,48 +93,102 @@ function updateRainStatsLive(stats, message) {
 function normalizeRainStats(payload) {
   if (!payload || !Array.isArray(payload.options) || payload.options.length < 2) return null;
   const capturedAt = Date.parse(payload.captured_at || "");
-  if (!Number.isFinite(capturedAt) || Date.now() - capturedAt > RAIN_STATS_MAX_AGE_MS) return null;
+  if (!Number.isFinite(capturedAt) || capturedAt > Date.now() + 30000 || Date.now() - capturedAt > RAIN_STATS_MAX_AGE_MS) return null;
   const options = payload.options
     .map((item) => ({
       label: String(item.label || "").trim().toUpperCase(),
-      count: Number.isFinite(Number(item.count)) ? Number(item.count) : null,
-      percent: Number.isFinite(Number(item.percent)) ? Number(item.percent) : null,
+      count: Number.isInteger(item.count) && item.count >= 0 ? item.count : null,
+      percent: typeof item.percent === "number" && item.percent >= 0 && item.percent <= 100 ? item.percent : null,
       correct: item.correct === true,
     }))
     .filter((item) => /^[A-Z]$/.test(item.label));
-  if (options.length < 2) return null;
+  const submitted = Number.isInteger(payload.submitted) && payload.submitted >= 0 ? payload.submitted : null;
+  if (options.length < 2 || options.some(item => item.count === null) || new Set(options.map(item => item.label)).size !== options.length) return null;
+  if (submitted === 0 || options.every(item => item.count === 0)) return null;
+  if (submitted !== null && options.some(item => item.count > submitted)) return null;
   return {
     capturedAt: new Date(capturedAt),
-    submitted: Number.isFinite(Number(payload.submitted)) ? Number(payload.submitted) : null,
+    submitted,
     options,
+    questionText: typeof payload.question_text === "string" ? payload.question_text : "",
   };
 }
 
-async function getRainStatsResult() {
+function normalizedQuestion(text) {
+  return String(text || "").normalize("NFKC").toUpperCase()
+    .replace(/学情数据[^\n]*/g, "")
+    .replace(/[^\p{Script=Han}A-Z0-9]/gu, "");
+}
+
+function questionMatches(statsText, slideText) {
+  const source = normalizedQuestion(statsText);
+  const target = normalizedQuestion(slideText);
+  if (source.length < 12 || target.length < 12) return false;
+  const units = new Set();
+  for (let index = 0; index < target.length - 3; index += 2) units.add(target.slice(index, index + 4));
+  let matches = 0;
+  for (const unit of units) if (source.includes(unit)) matches++;
+  return units.size >= 3 && matches >= 3 && matches / units.size >= 0.35;
+}
+
+function rainConnectionError(error) {
+  if (error?.name === "AbortError") return "识别助手连接超时（5秒）";
+  const detail = String(error?.message || error || "未知错误").slice(0, 100);
+  return `PowerPoint 未能读取识别助手返回内容（${detail}）`;
+}
+
+async function getRainStatsResult(questionTexts = []) {
   if (!els.rainStatsEnabled?.checked) return { stats: null, reason: "功能未启用" };
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 1200);
+  const timeout = setTimeout(() => controller.abort(), RAIN_STATS_TIMEOUT_MS);
   try {
     const response = await fetch(RAIN_STATS_URL, { cache: "no-store", signal: controller.signal });
     if (!response.ok) return { stats: null, reason: `识别助手返回 ${response.status}` };
     const payload = await response.json();
     const stats = normalizeRainStats(payload);
+    if (stats && questionTexts.length && !questionTexts.some(text => questionMatches(stats.questionText, text))) {
+      return { stats: null, reason: "统计题目与本题不匹配，已防止串题" };
+    }
     if (stats) return { stats, reason: "" };
     if (!payload?.captured_at) return { stats: null, reason: "识别助手已连接，但还没有识别到有效分布" };
     return { stats: null, reason: "最近数据不完整或已经过期" };
-  } catch (_) {
-    return { stats: null, reason: "识别助手未启动或连接被 PowerPoint 阻止" };
+  } catch (error) {
+    return { stats: null, reason: rainConnectionError(error) };
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function formatRainStats(stats) {
+function parseSlideQuestion(rawText) {
+  const answers = [];
+  const followups = [];
+  const lines = [];
+  for (const rawLine of String(rawText || "").split(/\r?\n/)) {
+    const line = rawLine.normalize("NFKC").trim();
+    if (/^标准答案\s*:/i.test(line)) {
+      const match = /^标准答案\s*:\s*([A-D])\s*$/i.exec(line);
+      if (!match) throw new Error("标准答案格式应为独立一行：标准答案：B（仅 A、B、C、D 单选）。");
+      answers.push(match[1].toUpperCase());
+    } else if (/^课堂追问\s*:/i.test(line)) {
+      const match = /^课堂追问\s*:\s*(.+)$/i.exec(line);
+      if (!match) throw new Error("课堂追问格式应为独立一行：课堂追问：为什么 C 不对？");
+      followups.push(match[1].trim());
+    } else {
+      lines.push(rawLine);
+    }
+  }
+  if (new Set(answers).size > 1) throw new Error("本页有多个不同的标准答案，请只保留一个。");
+  if (followups.length > 1) throw new Error("本页只保留一个课堂追问；需要更多追问请另用一页。");
+  if (followups.length && !answers.length) throw new Error("追问页缺少“标准答案：B”，已停止自动追问。");
+  return { question: lines.join("\n").trim(), correctAnswer: answers[0] || null, followup: followups[0] || null };
+}
+
+function formatRainStats(stats, correctAnswer = null) {
   const rows = stats.options.map((item) => {
     const details = [];
     if (item.count !== null) details.push(`${item.count}人`);
     if (item.percent !== null) details.push(`${item.percent}%`);
-    if (item.correct) details.push("雨课堂标记为正确选项");
+    if (correctAnswer === item.label) details.push("本页标注的正确选项");
     return `${item.label}：${details.join("，") || "已识别"}`;
   });
   if (stats.submitted !== null) rows.unshift(`提交人数：${stats.submitted}人`);
@@ -141,16 +196,28 @@ function formatRainStats(stats) {
 }
 
 async function checkRainStatsConnection() {
+  const hasKey = Boolean(localStorage.getItem(STORAGE_KEY));
+  let health = null;
+  let healthError = "";
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), RAIN_STATS_TIMEOUT_MS);
+    try {
+      const response = await fetch("http://127.0.0.1:19789/health", { cache: "no-store", signal: controller.signal });
+      if (response.ok) health = await response.json();
+    } finally { clearTimeout(timeout); }
+  } catch (error) { healthError = rainConnectionError(error); }
   const result = await getRainStatsResult();
   const stats = result.stats;
-  if (!els.rainStatsEnabled.checked) {
-    els.rainStatsStatus.textContent = "功能当前关闭；打开开关后再检查。";
-  } else if (!stats) {
-    els.rainStatsStatus.textContent = result.reason + "。请确认识别助手正在运行，并打开一次非零作答情况窗口。";
-  } else {
-    els.rainStatsStatus.textContent = `已连接：${formatRainStats(stats).replace(/\n/g, "；")}`;
-  }
-  updateRainStatsLive(stats, result.reason);
+  const checks = [
+    hasKey ? "AI密钥已保存" : "AI密钥未保存",
+    els.rainStatsEnabled.checked ? "学情开关已开" : "学情开关已关",
+    health?.ok ? "识别助手已连接" : `识别助手未连接：${healthError || "返回内容异常"}`,
+    stats ? "已捕获分布（尚未与题目核对）" : health?.last_capture_error || result.reason,
+    window.speechSynthesis ? "本机语音接口可用（需课前试听）" : "本机语音接口不可用",
+  ];
+  els.rainStatsStatus.textContent = checks.join("；") + "。";
+  updateRainStatsLive(null, stats ? "已捕获分布，讲解时再核对题目" : result.reason);
 }
 
 function saveKey() {
@@ -309,16 +376,27 @@ async function explainCurrentSlide() {
   try {
     const sourceSlide = await getCurrentSlideInfo();
     if (!sourceSlide) throw new Error("没有识别到正在显示的幻灯片，请重试。");
-    const question = await readCurrentSlideText(sourceSlide);
+    const slideText = await readCurrentSlideText(sourceSlide);
+    const { question, correctAnswer, followup } = parseSlideQuestion(slideText);
     if (!question) throw new Error("当前页没有读取到文字。图片题请把题目文字放在一个文本框中。");
 
-    const rainResult = await getRainStatsResult();
+    const rainResult = await getRainStatsResult([question]);
+    if (rainResult.stats && correctAnswer && !rainResult.stats.options.some(item => item.label === correctAnswer)) {
+      rainResult.stats = null;
+      rainResult.reason = `统计中缺少标准答案 ${correctAnswer} 选项，已防止误判`;
+    }
     const rainStats = rainResult.stats;
     updateRainStatsLive(rainStats, rainResult.reason);
+    const answerContext = correctAnswer
+      ? `\n\n教师在本页标注的标准答案是 ${correctAnswer}。这是判定对错的依据，不要自行改判；如果题目与该答案明显矛盾，请指出矛盾，不要编造理由。`
+      : "\n\n本页未标注标准答案，请独立判断；不要仅凭作答人数推断正确选项。";
     const statsContext = rainStats
-      ? `\n\n这是刚才雨课堂的全班汇总数据：\n${formatRainStats(rainStats)}\n\n请先讲正确答案和核心原理，再重点解释人数最多的错误选项为什么有迷惑性。只能把分布表述为“可能反映的误区”，不能断言学生真实想法，也不要提及任何学生个人。`
+      ? `\n\n这是刚才雨课堂的全班汇总数据：\n${formatRainStats(rainStats, correctAnswer)}\n\n${correctAnswer ? `请根据标准答案 ${correctAnswer} 对照各选项人数，重点解释人数较多的错误选项。` : "未提供教师标准答案时，不得将人数较多的选项直接称为错误选项。"}只能把分布表述为“可能反映的误区”，不能断言学生真实想法，也不要提及任何学生个人。`
       : "";
-    const prompt = `你是大学宏观经济学课堂的AI课程助教。请讲解下面的题目：\n\n${question}${statsContext}\n\n要求：先明确给出正确答案；再解释核心原理；有选项时逐项判断；不虚构题目中没有的数据；控制在课堂60—90秒可讲完；最后用一句话总结考点。`;
+    const task = followup
+      ? `这是教师预设的课堂追问：${followup}\n\n请直接回答这个追问，不要重新完整讲一遍原题。若追问的前提与教师标注的标准答案冲突，先指出冲突，不得编造支持理由。`
+      : "请先明确给出正确答案，再解释核心原理；有选项时逐项判断，最后用一句话总结考点。";
+    const prompt = `你是大学宏观经济学课堂的AI课程助教。原题如下：\n\n${question}${answerContext}${statsContext}\n\n${task}\n\n要求：优先依据你已配置的课程知识库解释原理；知识库没有支持的细节不要编造；不虚构题目中没有的数据；控制在课堂60—90秒可讲完。`;
     conversation = [{ role: "user", content: [{ type: "text", text: prompt }] }];
     const answer = await callYuanqi(key, conversation);
     conversation.push({ role: "assistant", content: [{ type: "text", text: answer }] });
@@ -328,7 +406,9 @@ async function explainCurrentSlide() {
     answerSlideId = sourceSlide.id;
     document.dispatchEvent(new CustomEvent("answer-ready", { detail: { slideId: answerSlideId } }));
     els.followupButton.disabled = false;
-    setStatus(rainStats ? "已根据雨课堂作答分布完成讲解。" : `讲解完成；未使用作答分布：${rainResult.reason}。`, false);
+    const answerLabel = correctAnswer ? `；本页标准答案 ${correctAnswer}` : "；本页未标注标准答案";
+    const completed = followup ? "课堂追问已回答" : "讲解完成";
+    setStatus(rainStats ? `${completed}${answerLabel}；已使用雨课堂作答分布。` : `${completed}${answerLabel}；未使用作答分布：${rainResult.reason}。`, false);
   } catch (error) {
     document.dispatchEvent(new Event("answer-failed"));
     setStatus(error.message || String(error), true);

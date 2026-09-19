@@ -209,15 +209,20 @@
       check();
     });
     window.addEventListener("pagehide", stop);
-    document.addEventListener("voice-state", () => { stop(); check(); });
+    document.addEventListener("voice-state", () => { stop(); if (!window.pptVoiceReading) schedule(); check(); });
     document.addEventListener("voice-progress", event => {
-      stop(); reveal(event.detail.offset, event.detail.reset);
+      stop(); done = false; reveal(event.detail.offset, event.detail.reset);
     });
     document.addEventListener("voice-complete", () => {
       stop();
-      if (ready && visibleSlide === ownerSlide) moveTo(Math.max(0, height() - answer.clientHeight));
-      done = true;
-      progress.textContent = "语音及解析展示完成";
+      if (!ready || visibleSlide !== ownerSlide) return;
+      if (height() <= answer.clientHeight + position() + 2) {
+        done = true;
+        progress.textContent = "语音及解析展示完成";
+      } else {
+        progress.textContent = "语音已完成 · 继续展示剩余解析";
+        schedule();
+      }
     });
     setInterval(check, 500);
     check();
