@@ -3,7 +3,8 @@ const ASSISTANT_ID = "2096407988983757888";
 const STORAGE_KEY = "yuanqi-app-key";
 const AUTO_SLIDES_KEY = "ppt-ai-auto-slide-ids";
 const RAIN_STATS_ENABLED_KEY = "ppt-ai-rain-stats-enabled";
-const RAIN_STATS_URL = "http://127.0.0.1:19789/latest";
+const RAIN_STATS_URL = "https://127.0.0.1:19789/latest";
+const RAIN_HEALTH_URL = "https://127.0.0.1:19789/health";
 const RAIN_STATS_MAX_AGE_MS = 10 * 60 * 1000;
 const RAIN_STATS_TIMEOUT_MS = 5000;
 
@@ -203,7 +204,7 @@ async function checkRainStatsConnection() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), RAIN_STATS_TIMEOUT_MS);
     try {
-      const response = await fetch("http://127.0.0.1:19789/health", { cache: "no-store", signal: controller.signal });
+      const response = await fetch(RAIN_HEALTH_URL, { cache: "no-store", signal: controller.signal });
       if (response.ok) health = await response.json();
     } finally { clearTimeout(timeout); }
   } catch (error) { healthError = rainConnectionError(error); }
