@@ -196,6 +196,17 @@ function formatRainStats(stats, correctAnswer = null) {
   return rows.join("\n");
 }
 
+function buildRainTeachingGuidance(stats, correctAnswer) {
+  const wrongChoices = stats.options
+    .filter((item) => item.label !== correctAnswer && item.count > 0)
+    .sort((left, right) => right.count - left.count)
+    .map((item) => `${item.label}（${item.count}人）`);
+  if (!wrongChoices.length) {
+    return "本题没有人选错。不要编造错因；在正常讲解后用一句话提醒判断关键即可。";
+  }
+  return `本班有学生选了错误选项：${wrongChoices.join("、")}。正常讲完正确答案和核心原理后，必须单独加一段“本班易错点”（最多两句）：先准确点名这些选项及人数，再依据课程知识指出一种可能的概念混淆，并给出一个具体的判断提醒。不要仅重复逐项判断，不要推断学生个人真实想法；1人作答不得说“多数人”或“普遍”。`;
+}
+
 async function checkRainStatsConnection() {
   const hasKey = Boolean(localStorage.getItem(STORAGE_KEY));
   let health = null;
@@ -382,6 +393,10 @@ async function explainCurrentSlide() {
     if (!question) throw new Error("当前页没有读取到文字。图片题请把题目文字放在一个文本框中。");
 
     const rainResult = await getRainStatsResult([question]);
+    if (rainResult.stats && !correctAnswer) {
+      rainResult.stats = null;
+      rainResult.reason = "本页未标注教师标准答案，已避免把 AI 自判当作学情判错";
+    }
     if (rainResult.stats && correctAnswer && !rainResult.stats.options.some(item => item.label === correctAnswer)) {
       rainResult.stats = null;
       rainResult.reason = `统计中缺少标准答案 ${correctAnswer} 选项，已防止误判`;
@@ -392,7 +407,7 @@ async function explainCurrentSlide() {
       ? `\n\n教师在本页标注的标准答案是 ${correctAnswer}。这是判定对错的依据，不要自行改判；如果题目与该答案明显矛盾，请指出矛盾，不要编造理由。`
       : "\n\n本页未标注标准答案，请独立判断；不要仅凭作答人数推断正确选项。";
     const statsContext = rainStats
-      ? `\n\n这是刚才雨课堂的全班汇总数据：\n${formatRainStats(rainStats, correctAnswer)}\n\n${correctAnswer ? `请根据标准答案 ${correctAnswer} 对照各选项人数，重点解释人数较多的错误选项。` : "未提供教师标准答案时，不得将人数较多的选项直接称为错误选项。"}只能把分布表述为“可能反映的误区”，不能断言学生真实想法，也不要提及任何学生个人。`
+      ? `\n\n这是刚才雨课堂的全班汇总数据：\n${formatRainStats(rainStats, correctAnswer)}\n\n${buildRainTeachingGuidance(rainStats, correctAnswer)}只把分布表述为可能的误区，不提及任何学生个人。`
       : "";
     const task = followup
       ? `这是教师预设的课堂追问：${followup}\n\n请直接回答这个追问，不要重新完整讲一遍原题。若追问的前提与教师标注的标准答案冲突，先指出冲突，不得编造支持理由。`
