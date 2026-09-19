@@ -20,6 +20,8 @@
     .show-view .answer-card { min-height: 0; }
     .followup input { min-width: 0; }
     .show-view .followup { display: grid; margin-top: 8px; }
+    #startRainHelper { display: inline-block; text-decoration: none; }
+    .show-view #startRainHelper { display: none; }
   </style>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
 </head>
@@ -69,7 +71,7 @@
     <button id="explainButton" class="primary" disabled>宏观 AI 助教讲解本题</button>
     <p id="status" class="status">正在连接 PowerPoint…</p>
     <p id="rainStatsLiveStatus" class="hint stats-badge" aria-live="polite">学情数据：功能未启用</p>
-    <div class="settings-toolbar" style="flex-shrink:0;margin:0 0 8px"><button id="settingsButton" class="secondary" aria-label="设置" style="padding:6px 12px">⚙︎ 助教设置</button></div>
+    <div class="settings-toolbar" style="flex-shrink:0;margin:0 0 8px;display:flex;gap:8px;flex-wrap:wrap"><button id="settingsButton" class="secondary" aria-label="设置" style="padding:6px 12px">⚙︎ 助教设置</button><a id="startRainHelper" class="secondary" href="pptai-rain://start" style="padding:6px 12px">启动雨课堂识别助手（终端）</a></div>
 
     <section class="answer-card">
       <div class="answer-title">本题解析 <span id="readingStatus" aria-live="polite">等待讲解</span><button id="replayVoice" class="secondary" disabled style="padding:4px 10px;font-size:12px">播放 / 重听</button></div>
@@ -84,7 +86,7 @@
     </div>
   </main>
   <script src="app.js?v=15"></script>
-  <script src="voice.js?v=5"></script>
-  <script src="scroll.js?v=8"></script>
+  <script src="voice.js?v=6"></script>
+  <script src="scroll.js?v=9"></script>
 </body>
 </html>

@@ -105,7 +105,7 @@
     stop(); lease(true);
     previewing = preview;
     const run = token;
-    let index = 0, round = 1, first = true;
+    let index = 0, round = 1, first = true, learnedCharsPerSecond = 5;
     state(true);
     async function next() {
       if (run !== token) return;
@@ -135,22 +135,21 @@
       const partIndex = index;
       const raw = parts[partIndex];
       const speechLength = utterance.text.length;
-      let anchorChar = 0, anchorAt = Date.now(), lastBoundaryAt = 0;
+      let anchorChar = 0, anchorAt = Date.now(), startedAt = null, reportedChar = 0;
       const rawOffset = charIndex => {
         let low = 0, high = raw.length;
         while (low < high) { const mid = (low + high) >> 1; if (clean(raw.slice(0, mid)).length < charIndex) low = mid + 1; else high = mid; }
         return offsets[partIndex] + low;
       };
-      const report = charIndex => document.dispatchEvent(new CustomEvent("voice-progress", { detail: { offset: rawOffset(charIndex), reset: false } }));
+      const report = charIndex => {
+        reportedChar = Math.max(reportedChar, Math.min(speechLength, charIndex));
+        document.dispatchEvent(new CustomEvent("voice-progress", { detail: { offset: rawOffset(reportedChar), reset: false } }));
+      };
       function estimate() {
         if (run !== token || partIndex !== index) return;
-        // Chinese voices in PowerPoint's WebView often omit word boundaries.
-        // Use a conservative clock only while no fresh boundary is available.
-        if (!preview && Date.now() - lastBoundaryAt > 900) {
-          const charsPerSecond = 3.3 * utterance.rate;
-          report(Math.min(speechLength, anchorChar + Math.floor((Date.now() - anchorAt) * charsPerSecond / 1000)));
-        }
-        progressTimer = setTimeout(estimate, 350);
+        // Predict between boundary events. The host often omits them entirely.
+        if (!preview) report(anchorChar + Math.floor((Date.now() - anchorAt) * learnedCharsPerSecond * utterance.rate / 1000));
+        progressTimer = setTimeout(estimate, 250);
       }
       utterance.voice = voice; utterance.lang = voice.lang;
       utterance.rate = preview ? Number(rate.value) : options().rate;
@@ -159,21 +158,26 @@
         clearTimeout(watchdog);
         hint.textContent = "正在朗读 " + (index + 1) + " / " + parts.length + " 段";
         if (!preview) document.dispatchEvent(new CustomEvent("voice-progress", { detail: { offset: offsets[index], reset: index === 0 } }));
-        anchorAt = Date.now();
+        anchorAt = startedAt = Date.now();
         clearTimeout(progressTimer);
-        progressTimer = setTimeout(estimate, 350);
+        progressTimer = setTimeout(estimate, 250);
         watchdog = setTimeout(() => { if (run === token) stop("语音超时，已恢复自动文字展示。"); }, 120000);
       };
       utterance.onboundary = event => {
         if (run !== token || preview || !Number.isInteger(event.charIndex)) return;
         // Translate cleaned speech positions back to the original displayed text.
         anchorChar = Math.max(anchorChar, Math.min(speechLength, event.charIndex));
-        anchorAt = lastBoundaryAt = Date.now();
+        anchorAt = Date.now();
         report(anchorChar);
       };
       utterance.onend = () => {
         if (run !== token) return;
         clearTimeout(watchdog); clearTimeout(progressTimer);
+        const duration = startedAt === null ? 0 : Date.now() - startedAt;
+        if (duration >= 1000 && speechLength >= 10) {
+          const observed = speechLength * 1000 / duration / utterance.rate;
+          learnedCharsPerSecond = Math.max(3.5, Math.min(7.5, learnedCharsPerSecond * 0.55 + observed * 0.45));
+        }
         if (!preview) document.dispatchEvent(new CustomEvent("voice-progress", { detail: { offset: offsets[index] + parts[index].length, reset: false } }));
         index++;
         // Natural paragraph breathing, rather than restarting every short line.

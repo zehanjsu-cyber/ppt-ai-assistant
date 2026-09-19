@@ -48,8 +48,11 @@
       if (textLength <= 0) return;
       // PowerPoint's presentation WebView can return stale or empty Range
       // rectangles. Text progress is reliable even when geometry is not.
-      const fraction = Math.max(0, Math.min(1, offset / textLength));
-      moveTo((height() - answer.clientHeight) * fraction);
+      // Keep the spoken words in the upper half, with roughly one line of
+      // look-ahead. Using maxScroll * fraction leaves late words near the
+      // bottom edge and can hide them before the next progress callback.
+      const fraction = Math.max(0, Math.min(1, (offset + 12) / textLength));
+      moveTo(height() * fraction - answer.clientHeight * 0.4);
       progress.textContent = "语音同步 · 跟随正在朗读的内容";
     } catch (_) { /* Keep speech running if host geometry is unavailable. */ }
   }
