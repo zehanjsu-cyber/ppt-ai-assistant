@@ -27,6 +27,7 @@ Office.onReady((info) => {
     autoStatus: document.getElementById("autoStatus"),
     rainStatsEnabled: document.getElementById("rainStatsEnabled"),
     rainStatsStatus: document.getElementById("rainStatsStatus"),
+    rainStatsLiveStatus: document.getElementById("rainStatsLiveStatus"),
     checkRainStats: document.getElementById("checkRainStats"),
     followupInput: document.getElementById("followupInput"),
     followupButton: document.getElementById("followupButton"),
@@ -40,6 +41,7 @@ Office.onReady((info) => {
   els.rainStatsEnabled.checked = localStorage.getItem(RAIN_STATS_ENABLED_KEY) === "1";
   els.rainStatsEnabled.addEventListener("change", saveRainStatsSetting);
   els.checkRainStats.addEventListener("click", checkRainStatsConnection);
+  updateRainStatsLive(null, els.rainStatsEnabled.checked ? "尚未读取作答分布" : "功能未启用");
   els.explain.addEventListener("click", explainCurrentSlide);
   els.followupButton.addEventListener("click", askFollowup);
   els.followupInput.addEventListener("keydown", (event) => {
@@ -75,6 +77,16 @@ function saveRainStatsSetting() {
   els.rainStatsStatus.textContent = els.rainStatsEnabled.checked
     ? "已开启。讲解时会优先使用最近一次有效作答分布。"
     : "已关闭。AI 仅根据当前 PPT 题目讲解。";
+  updateRainStatsLive(null, els.rainStatsEnabled.checked ? "已开启，等待作答分布" : "功能未启用");
+}
+
+function updateRainStatsLive(stats, message) {
+  if (!els.rainStatsLiveStatus) return;
+  els.rainStatsLiveStatus.classList.toggle("used", Boolean(stats));
+  els.rainStatsLiveStatus.classList.toggle("warning", !stats && els.rainStatsEnabled?.checked);
+  els.rainStatsLiveStatus.textContent = stats
+    ? `学情数据：已使用（${stats.options.map(item => `${item.label} ${item.count ?? "?"}人`).join("，")}）`
+    : `学情数据：未使用（${message}）`;
 }
 
 function normalizeRainStats(payload) {
@@ -97,16 +109,20 @@ function normalizeRainStats(payload) {
   };
 }
 
-async function getRainStats() {
-  if (!els.rainStatsEnabled?.checked) return null;
+async function getRainStatsResult() {
+  if (!els.rainStatsEnabled?.checked) return { stats: null, reason: "功能未启用" };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1200);
   try {
     const response = await fetch(RAIN_STATS_URL, { cache: "no-store", signal: controller.signal });
-    if (!response.ok) return null;
-    return normalizeRainStats(await response.json());
+    if (!response.ok) return { stats: null, reason: `识别助手返回 ${response.status}` };
+    const payload = await response.json();
+    const stats = normalizeRainStats(payload);
+    if (stats) return { stats, reason: "" };
+    if (!payload?.captured_at) return { stats: null, reason: "识别助手已连接，但还没有识别到有效分布" };
+    return { stats: null, reason: "最近数据不完整或已经过期" };
   } catch (_) {
-    return null;
+    return { stats: null, reason: "识别助手未启动或连接被 PowerPoint 阻止" };
   } finally {
     clearTimeout(timeout);
   }
@@ -125,14 +141,16 @@ function formatRainStats(stats) {
 }
 
 async function checkRainStatsConnection() {
-  const stats = await getRainStats();
+  const result = await getRainStatsResult();
+  const stats = result.stats;
   if (!els.rainStatsEnabled.checked) {
     els.rainStatsStatus.textContent = "功能当前关闭；打开开关后再检查。";
   } else if (!stats) {
-    els.rainStatsStatus.textContent = "尚未取得有效分布。请确认本机识别助手已运行，并打开一次作答情况窗口。";
+    els.rainStatsStatus.textContent = result.reason + "。请确认识别助手正在运行，并打开一次非零作答情况窗口。";
   } else {
     els.rainStatsStatus.textContent = `已连接：${formatRainStats(stats).replace(/\n/g, "；")}`;
   }
+  updateRainStatsLive(stats, result.reason);
 }
 
 function saveKey() {
@@ -294,7 +312,9 @@ async function explainCurrentSlide() {
     const question = await readCurrentSlideText(sourceSlide);
     if (!question) throw new Error("当前页没有读取到文字。图片题请把题目文字放在一个文本框中。");
 
-    const rainStats = await getRainStats();
+    const rainResult = await getRainStatsResult();
+    const rainStats = rainResult.stats;
+    updateRainStatsLive(rainStats, rainResult.reason);
     const statsContext = rainStats
       ? `\n\n这是刚才雨课堂的全班汇总数据：\n${formatRainStats(rainStats)}\n\n请先讲正确答案和核心原理，再重点解释人数最多的错误选项为什么有迷惑性。只能把分布表述为“可能反映的误区”，不能断言学生真实想法，也不要提及任何学生个人。`
       : "";
@@ -308,7 +328,7 @@ async function explainCurrentSlide() {
     answerSlideId = sourceSlide.id;
     document.dispatchEvent(new CustomEvent("answer-ready", { detail: { slideId: answerSlideId } }));
     els.followupButton.disabled = false;
-    setStatus(rainStats ? "已根据雨课堂作答分布完成讲解。" : "讲解完成。", false);
+    setStatus(rainStats ? "已根据雨课堂作答分布完成讲解。" : `讲解完成；未使用作答分布：${rainResult.reason}。`, false);
   } catch (error) {
     document.dispatchEvent(new Event("answer-failed"));
     setStatus(error.message || String(error), true);

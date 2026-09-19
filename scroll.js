@@ -6,7 +6,7 @@
   let checking = false, generation = 0, ready = false, done = false, phase = "idle";
   let progress;
   let fallback = null, fallbackHeight = 0, fallbackTop = 0;
-  let misses = 0, voiceFinished = false;
+  let misses = 0;
   const position = () => fallback ? fallbackTop : answer.scrollTop;
   const height = () => fallback ? fallbackHeight : answer.scrollHeight;
   function moveFallback(top) {
@@ -70,7 +70,7 @@
   }
 
   function schedule() {
-    if (phase !== "idle" || !ready || done || voiceFinished || window.pptVoiceReading || !options().enabled || !visibleSlide || visibleSlide !== ownerSlide || answer.clientHeight <= 0) return;
+    if (phase !== "idle" || !ready || done || window.pptVoiceReading || !options().enabled || !visibleSlide || visibleSlide !== ownerSlide || answer.clientHeight <= 0) return;
     const atEnd = height() <= answer.clientHeight + position() + 2;
     progress.textContent = atEnd ? "最后一屏 · 阅读后停止" : "完整解析 · 每屏停留 " + options().seconds + " 秒";
     const token = generation;
@@ -150,7 +150,6 @@
         visibleSlide = current;
         resetPosition();
         done = false;
-        voiceFinished = false;
       }
       schedule();
     } finally {
@@ -184,7 +183,7 @@
       });
     });
     document.addEventListener("answer-pending", () => {
-      stop(); ready = false; voiceFinished = false;
+      stop(); ready = false;
       progress.textContent = "正在准备完整解析…";
     });
     document.addEventListener("answer-failed", () => {
@@ -192,7 +191,7 @@
     });
     document.addEventListener("answer-ready", (event) => {
       stop();
-      ready = true; done = false; voiceFinished = false;
+      ready = true; done = false;
       ownerSlide = event.detail.slideId;
       // app.js has replaced the previous answer, including fallback markup.
       fallback = null; fallbackHeight = 0; fallbackTop = 0;
@@ -212,10 +211,13 @@
     window.addEventListener("pagehide", stop);
     document.addEventListener("voice-state", () => { stop(); check(); });
     document.addEventListener("voice-progress", event => {
-      voiceFinished = false; stop(); reveal(event.detail.offset, event.detail.reset);
+      stop(); reveal(event.detail.offset, event.detail.reset);
     });
     document.addEventListener("voice-complete", () => {
-      voiceFinished = true; stop(); progress.textContent = "语音及解析展示完成";
+      stop();
+      if (ready && visibleSlide === ownerSlide) moveTo(Math.max(0, height() - answer.clientHeight));
+      done = true;
+      progress.textContent = "语音及解析展示完成";
     });
     setInterval(check, 500);
     check();

@@ -24,6 +24,9 @@ button:disabled { cursor: wait; opacity: .55; }
 .hint { color: #64748b; font-size: 12px; margin: 9px 0 0; line-height: 1.45; }
 .hidden { display: none; }
 .followup { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 12px; }
+.stats-badge { flex-shrink: 0; margin: -4px 0 8px; padding: 6px 9px; border-radius: 8px; background: #edf3fa; color: #31506f; }
+.stats-badge.used { background: #e8f6ec; color: #176638; }
+.stats-badge.warning { background: #fff4df; color: #865700; }
 body { background: linear-gradient(145deg, #edf3fa, #faf8f2); color: #182d49; }
 main { padding: 14px; }
 header { gap: 12px; padding: 10px 12px; border-radius: 16px; background: #142e4c; color: #fff; box-shadow: 0 6px 18px #142e4c16; }
