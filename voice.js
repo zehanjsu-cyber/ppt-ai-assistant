@@ -1,7 +1,7 @@
 // Optional local speech synthesis: no new service, key, or audio upload.
 (() => {
   const KEY = "ppt-ai-voice-options";
-  let answer, hint, enabled, rate, owner = null, token = 0, watchdog = null, polling = false;
+  let answer, hint, enabled, rate, owner = null, token = 0, watchdog = null, progressTimer = null, polling = false;
   let completedText = "", autoPlayed = false, previewing = false, visibleOwner = false;
   let voiceSelect, repeatSelect, replayButton;
   let readMisses = 0, retryAt = 0;
@@ -28,6 +28,7 @@
   function stop(message) {
     token++;
     clearTimeout(watchdog);
+    clearTimeout(progressTimer);
     if (window.pptVoiceReading && window.speechSynthesis) window.speechSynthesis.cancel();
     lease(false);
     previewing = false;
@@ -36,7 +37,10 @@
   }
   function clean(text) {
     return text
-      .replace(/【[^】]*】|\[\d+(?:[†,，\-]\S*?)?\]/g, "")
+      .replace(/【[^】]*】|\[\d+(?:[†,，\-]\S*?)?\]|［\d+］|〔\d+〕/g, "")
+      // Some model answers contain a broken citation tail such as `1] or 1].
+      .replace(/`\d{1,3}[\]］]/g, "")
+      .replace(/(^|[\s，。；：、（(])`?\d{1,3}[\]］](?=$|[\s，。；：、）)!?\p{Script=Han}])/gu, "$1")
       .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
       .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
       .replace(/https?:\/\/\S+/g, "")
@@ -66,11 +70,12 @@
   }
   function chunks(text) {
     // Short utterances are safer than one long browser speech request.
+    const limit = 76;
     const units = (text.match(/[^。！？；\n]+[。！？；\n]*/g) || [text]).flatMap(part => {
       const result = [];
-      while (part.length > 200) {
-        let cut = part.lastIndexOf("，", 180);
-        if (cut < 60) cut = 179;
+      while (part.length > limit) {
+        let cut = part.lastIndexOf("，", limit);
+        if (cut < 25) cut = limit - 1;
         result.push(part.slice(0, cut + 1)); part = part.slice(cut + 1);
       }
       if (part.trim()) result.push(part);
@@ -79,7 +84,7 @@
     const result = []; let current = "";
     for (const unit of units) {
       if (!clean(unit)) { current += unit; continue; }
-      if (current && current.length + unit.length > 200) { result.push(current); current = ""; }
+      if (current && current.length + unit.length > limit) { result.push(current); current = ""; }
       current += unit;
       if (/\n\s*\n$/.test(unit) && current.length > 50) { result.push(current); current = ""; }
     }
@@ -127,6 +132,26 @@
         stop("语音讲解完成。可点“重听”，或翻走后返回自动重听。"); return;
       }
       const utterance = new window.SpeechSynthesisUtterance(clean(parts[index]));
+      const partIndex = index;
+      const raw = parts[partIndex];
+      const speechLength = utterance.text.length;
+      let anchorChar = 0, anchorAt = Date.now(), lastBoundaryAt = 0;
+      const rawOffset = charIndex => {
+        let low = 0, high = raw.length;
+        while (low < high) { const mid = (low + high) >> 1; if (clean(raw.slice(0, mid)).length < charIndex) low = mid + 1; else high = mid; }
+        return offsets[partIndex] + low;
+      };
+      const report = charIndex => document.dispatchEvent(new CustomEvent("voice-progress", { detail: { offset: rawOffset(charIndex), reset: false } }));
+      function estimate() {
+        if (run !== token || partIndex !== index) return;
+        // Chinese voices in PowerPoint's WebView often omit word boundaries.
+        // Use a conservative clock only while no fresh boundary is available.
+        if (!preview && Date.now() - lastBoundaryAt > 900) {
+          const charsPerSecond = 3.3 * utterance.rate;
+          report(Math.min(speechLength, anchorChar + Math.floor((Date.now() - anchorAt) * charsPerSecond / 1000)));
+        }
+        progressTimer = setTimeout(estimate, 350);
+      }
       utterance.voice = voice; utterance.lang = voice.lang;
       utterance.rate = preview ? Number(rate.value) : options().rate;
       utterance.onstart = () => {
@@ -134,19 +159,23 @@
         clearTimeout(watchdog);
         hint.textContent = "正在朗读 " + (index + 1) + " / " + parts.length + " 段";
         if (!preview) document.dispatchEvent(new CustomEvent("voice-progress", { detail: { offset: offsets[index], reset: index === 0 } }));
+        anchorAt = Date.now();
+        clearTimeout(progressTimer);
+        progressTimer = setTimeout(estimate, 350);
         watchdog = setTimeout(() => { if (run === token) stop("语音超时，已恢复自动文字展示。"); }, 120000);
       };
       utterance.onboundary = event => {
         if (run !== token || preview || !Number.isInteger(event.charIndex)) return;
         // Translate cleaned speech positions back to the original displayed text.
-        const raw = parts[index];
-        let low = 0, high = raw.length;
-        while (low < high) { const mid = (low + high) >> 1; if (clean(raw.slice(0, mid)).length < event.charIndex) low = mid + 1; else high = mid; }
-        document.dispatchEvent(new CustomEvent("voice-progress", { detail: { offset: offsets[index] + low, reset: false } }));
+        anchorChar = Math.max(anchorChar, Math.min(speechLength, event.charIndex));
+        anchorAt = lastBoundaryAt = Date.now();
+        report(anchorChar);
       };
       utterance.onend = () => {
         if (run !== token) return;
-        clearTimeout(watchdog); index++;
+        clearTimeout(watchdog); clearTimeout(progressTimer);
+        if (!preview) document.dispatchEvent(new CustomEvent("voice-progress", { detail: { offset: offsets[index] + parts[index].length, reset: false } }));
+        index++;
         // Natural paragraph breathing, rather than restarting every short line.
         watchdog = setTimeout(() => { if (run === token) next(); }, 300);
       };

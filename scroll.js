@@ -7,6 +7,7 @@
   let progress;
   let fallback = null, fallbackHeight = 0, fallbackTop = 0;
   let misses = 0;
+  let lastVoiceOffset = null;
   const position = () => fallback ? fallbackTop : answer.scrollTop;
   const height = () => fallback ? fallbackHeight : answer.scrollHeight;
   function moveFallback(top) {
@@ -45,8 +46,9 @@
       const start = Math.max(0, Math.min(offset, textNode.length - 1));
       range.setStart(textNode, start); range.setEnd(textNode, start + 1);
       const rect = range.getBoundingClientRect(), viewport = answer.getBoundingClientRect();
-      if (rect.top < viewport.top || rect.bottom > viewport.bottom - 20) {
-        moveTo(position() + rect.top - viewport.top - 8);
+      const followLine = viewport.top + answer.clientHeight * 0.60;
+      if (rect.top < viewport.top || rect.bottom > followLine) {
+        moveTo(position() + rect.top - viewport.top - answer.clientHeight * 0.50);
       }
       progress.textContent = "语音同步 · 跟随正在朗读的内容";
     } catch (_) { /* Keep speech running if host geometry is unavailable. */ }
@@ -151,6 +153,7 @@
         resetPosition();
         done = false;
       }
+      if (window.pptVoiceReading && lastVoiceOffset !== null) reveal(lastVoiceOffset, false);
       schedule();
     } finally {
       checking = false;
@@ -183,7 +186,7 @@
       });
     });
     document.addEventListener("answer-pending", () => {
-      stop(); ready = false;
+      stop(); ready = false; lastVoiceOffset = null;
       progress.textContent = "正在准备完整解析…";
     });
     document.addEventListener("answer-failed", () => {
@@ -192,6 +195,7 @@
     document.addEventListener("answer-ready", (event) => {
       stop();
       ready = true; done = false;
+      lastVoiceOffset = null;
       ownerSlide = event.detail.slideId;
       // app.js has replaced the previous answer, including fallback markup.
       fallback = null; fallbackHeight = 0; fallbackTop = 0;
@@ -209,9 +213,12 @@
       check();
     });
     window.addEventListener("pagehide", stop);
-    document.addEventListener("voice-state", () => { stop(); if (!window.pptVoiceReading) schedule(); check(); });
+    document.addEventListener("voice-state", () => { stop(); if (!window.pptVoiceReading) { lastVoiceOffset = null; schedule(); } check(); });
     document.addEventListener("voice-progress", event => {
-      stop(); done = false; reveal(event.detail.offset, event.detail.reset);
+      if (phase !== "idle") stop();
+      done = false;
+      lastVoiceOffset = event.detail.offset;
+      reveal(event.detail.offset, event.detail.reset);
     });
     document.addEventListener("voice-complete", () => {
       stop();
