@@ -249,16 +249,30 @@ function buildRainTeachingGuidance(stats, correctAnswer) {
 
 function parseIndependentAnswer(text) {
   const value = String(text || "").normalize("NFKC").trim();
-  const match = /^(?:独立判断|答案)\s*[:：]\s*([A-D]|无法判断)\s*[。.]?$/i.exec(value);
-  return match && match[1] !== "无法判断" ? match[1].toUpperCase() : null;
+  if (/^(?:独立判断|正确答案|答案)\s*[:：]?\s*无法判断/i.test(value)) return null;
+  const firstLine = value.split(/\r?\n/, 1)[0].replace(/^[\s*#>-]+/, "").trim();
+  const explicit = [
+    ...value.matchAll(/(?:独立判断|正确答案|答案|应选|选择)\s*(?:是|为|应为|选)?\s*[:：]?\s*([A-D])(?=$|[^A-Z0-9])/gi),
+    ...value.matchAll(/选项\s*([A-D])\s*(?:正确|符合题意)/gi),
+  ].map(match => match[1].toUpperCase());
+  if (explicit.length && new Set(explicit).size === 1) return explicit[0];
+  if (explicit.length) return null;
+  const short = /^(?:选项\s*)?([A-D])(?:\s*[。.!！])?$/i.exec(firstLine);
+  return short ? short[1].toUpperCase() : null;
 }
 
 async function verifyTeacherAnswer(key, question, correctAnswer) {
   if (!correctAnswer) return;
-  const checkPrompt = `请只依据你已配置的课程知识库，独立判断下面这道单选题的正确选项。此阶段不要参考教师答案或学生作答人数，也不要展开讲解。只输出一行“独立判断：A”（A、B、C、D之一）；题意不清、知识不足或有多个合理选项时只输出“独立判断：无法判断”。\n\n题目：\n${question}`;
+  const checkPrompt = `请像正常回答这道宏观经济学单选题一样，优先依据已配置的课程知识库与题干独立判断；知识库未命中时，可依据可靠的宏观经济学知识判断。此阶段不要参考教师答案或学生作答人数，也不要展开讲解。请只输出一行“独立判断：A”（A、B、C、D之一）；题意不清或有多个合理选项时输出“独立判断：无法判断”。\n\n题目：\n${question}`;
   const result = await callYuanqi(key, [{ role: "user", content: [{ type: "text", text: checkPrompt }] }], "ppt-classroom-check");
   const independent = parseIndependentAnswer(result);
-  if (!independent) throw new Error("AI 无法明确独立判断本题答案，已停止讲解。请核对题目和标准答案。");
+  if (!independent) {
+    if (/(?:无法判断|无法确定|不能确定|不确定|题意不清|多个合理选项)/.test(result)) {
+      throw new Error("AI 认为题目或知识依据不足，无法确定唯一选项；已停止讲解，请核对题目和标准答案。");
+    }
+    const excerpt = String(result || "").replace(/\s+/g, " ").slice(0, 80);
+    throw new Error(`AI 已返回文字，但未给出可核验的唯一选项；已停止讲解。核验回复：${excerpt || "空白"}`);
+  }
   if (independent !== correctAnswer) throw new Error(`答案冲突：PPT 标准答案为 ${correctAnswer}，AI 独立判断为 ${independent}。已停止讲解，请教师核对。`);
 }
 
