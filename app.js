@@ -261,9 +261,18 @@ function parseIndependentAnswer(text) {
   return short ? short[1].toUpperCase() : null;
 }
 
+function verificationQuestion(question) {
+  const clean = String(question || "").trim();
+  const optionLines = clean.match(/(?:^|\n)\s*[A-D]\s*[.、．):：]\s*[^\n]+/gi) || [];
+  if (optionLines.length === 4) {
+    return `${clean}\n\n已核对的选项对应关系：\n${optionLines.map(line => line.trim()).join("\n")}`;
+  }
+  return clean;
+}
+
 async function verifyTeacherAnswer(key, question, correctAnswer) {
   if (!correctAnswer) return;
-  const checkPrompt = `请像正常回答这道宏观经济学单选题一样，优先依据已配置的课程知识库与题干独立判断；知识库未命中时，可依据可靠的宏观经济学知识判断。此阶段不要参考教师答案或学生作答人数，也不要展开讲解。请只输出一行“独立判断：A”（A、B、C、D之一）；题意不清或有多个合理选项时输出“独立判断：无法判断”。\n\n题目：\n${question}`;
+  const checkPrompt = `请独立核验下面的宏观经济学单选题，绝不参考教师答案或学生作答人数。题目中的 A、B、C、D 与选项内容已经逐项对应，不能把字母与内容拆开或重排。若题中有公式、收入、消费、储蓄、比例或数值关系，必须先按题干计算，再选与计算结果完全对应的选项；不要凭常识猜测。\n\n只输出两行：第一行简短写出关键计算或判断依据；第二行严格输出“独立判断：A”（A、B、C、D之一）。题意不清或有多个合理选项时第二行输出“独立判断：无法判断”。\n\n题目：\n${verificationQuestion(question)}`;
   const result = await callYuanqi(key, [{ role: "user", content: [{ type: "text", text: checkPrompt }] }], "ppt-classroom-check");
   const independent = parseIndependentAnswer(result);
   if (!independent) {
@@ -273,7 +282,11 @@ async function verifyTeacherAnswer(key, question, correctAnswer) {
     const excerpt = String(result || "").replace(/\s+/g, " ").slice(0, 80);
     throw new Error(`AI 已返回文字，但未给出可核验的唯一选项；已停止讲解。核验回复：${excerpt || "空白"}`);
   }
-  if (independent !== correctAnswer) throw new Error(`答案冲突：PPT 标准答案为 ${correctAnswer}，AI 独立判断为 ${independent}。已停止讲解，请教师核对。`);
+  if (independent !== correctAnswer) {
+    const options = (String(question).match(/(?:^|\n)\s*[A-D]\s*[.、．):：]\s*[^\n]+/gi) || []).map(line => line.trim()).join("；");
+    const optionHint = options ? ` 读取选项：${options}。` : "";
+    throw new Error(`答案冲突：PPT 标准答案为 ${correctAnswer}，AI 独立判断为 ${independent}。${optionHint}已停止讲解，请教师核对。`);
+  }
 }
 
 async function getCheckedExplanation(key, question, correctAnswer, messages) {
