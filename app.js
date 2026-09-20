@@ -124,18 +124,37 @@ function normalizedQuestion(text) {
 function questionMatches(statsText, slideText) {
   const source = normalizedQuestion(statsText);
   const target = normalizedQuestion(slideText);
-  if (source.length < 12 || target.length < 12) return false;
+  if (source.length < 8 || target.length < 8) return false;
+
+  // The helper OCRs the whole screen. Depending on the current Rain Classroom
+  // layout, the question may be split by the popup, a line break, or an OCR
+  // error in one character. Exact full-text matching therefore rejects valid
+  // distributions when the teacher changes to a new question. Compare the
+  // non-generic stem first, then use overlapping 3-character windows as a
+  // tolerant fallback.
+  const rawStem = String(slideText).split(/[?？。！!]/, 1)[0];
+  const stem = normalizedQuestion(rawStem);
+  if (stem.length >= 10 && source.includes(stem)) return true;
+
   const units = new Set();
-  for (let index = 0; index < target.length - 3; index += 2) units.add(target.slice(index, index + 4));
+  for (let index = 0; index <= target.length - 3; index++) {
+    const unit = target.slice(index, index + 3);
+    if (unit.length === 3) units.add(unit);
+  }
+  if (units.size < 3) return false;
   let matches = 0;
   for (const unit of units) if (source.includes(unit)) matches++;
-  if (units.size < 3 || matches < 3) return false;
-  if (matches / units.size >= 0.35) return true;
-  // A Terminal window can cover part of the answer options in the screenshot.
-  // Allow that narrow case only when the full, non-generic question stem is
-  // visible and the remaining option text still contributes overlap.
-  const stem = normalizedQuestion(String(slideText).split(/[?？]/, 1)[0]);
-  return stem.length >= 18 && source.includes(stem) && matches / units.size >= 0.30;
+  const overlap = matches / units.size;
+  if (matches < 3 || overlap < 0.28) return false;
+
+  // A popup or terminal can cover part of the screenshot. Require either a
+  // substantial stem overlap or a stronger overall overlap before accepting.
+  const stemUnits = new Set();
+  for (let index = 0; index <= stem.length - 3; index++) stemUnits.add(stem.slice(index, index + 3));
+  let stemMatches = 0;
+  for (const unit of stemUnits) if (source.includes(unit)) stemMatches++;
+  const stemOverlap = stemUnits.size ? stemMatches / stemUnits.size : 0;
+  return (stem.length >= 8 && stemOverlap >= 0.45) || overlap >= 0.52;
 }
 
 function rainConnectionError(error) {
