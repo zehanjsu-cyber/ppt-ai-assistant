@@ -138,6 +138,14 @@ function rainConnectionError(error) {
   return `PowerPoint 未能读取识别助手返回内容（${detail}）`;
 }
 
+function rainEmptyMessage(health) {
+  if (health?.last_capture_error?.includes("屏幕录制失败")) return "识别助手没有屏幕录制权限；请在系统设置中允许后重启助手";
+  if (health?.last_capture_error && !health.last_capture_error.includes("未发现") && !health.last_capture_error.includes("尚未识别")) {
+    return `识别助手截图失败：${health.last_capture_error}`;
+  }
+  return "未捕获非零作答分布；请在助手运行时打开雨课堂“作答情况”窗口，等终端显示“已记录作答分布”后再翻到讲解页";
+}
+
 async function getRainStatsResult(questionTexts = []) {
   if (!els.rainStatsEnabled?.checked) return { stats: null, reason: "功能未启用" };
   const controller = new AbortController();
@@ -151,7 +159,13 @@ async function getRainStatsResult(questionTexts = []) {
       return { stats: null, reason: "统计题目与本题不匹配，已防止串题" };
     }
     if (stats) return { stats, reason: "" };
-    if (!payload?.captured_at) return { stats: null, reason: "识别助手已连接，但还没有识别到有效分布" };
+    if (!payload?.captured_at) {
+      try {
+        const healthResponse = await fetch(RAIN_HEALTH_URL, { cache: "no-store", signal: controller.signal });
+        if (healthResponse.ok) return { stats: null, reason: rainEmptyMessage(await healthResponse.json()) };
+      } catch (_) { /* The /latest response already confirms connectivity. */ }
+      return { stats: null, reason: rainEmptyMessage(null) };
+    }
     return { stats: null, reason: "最近数据不完整或已经过期" };
   } catch (error) {
     return { stats: null, reason: rainConnectionError(error) };
@@ -225,7 +239,7 @@ async function checkRainStatsConnection() {
     hasKey ? "AI密钥已保存" : "AI密钥未保存",
     els.rainStatsEnabled.checked ? "学情开关已开" : "学情开关已关",
     health?.ok ? "识别助手已连接" : `识别助手未连接：${healthError || "返回内容异常"}`,
-    stats ? "已捕获分布（尚未与题目核对）" : health?.last_capture_error || result.reason,
+    stats ? "已捕获分布（尚未与题目核对）" : result.reason,
     window.speechSynthesis ? "本机语音接口可用（需课前试听）" : "本机语音接口不可用",
   ];
   els.rainStatsStatus.textContent = checks.join("；") + "。";
