@@ -140,6 +140,7 @@ function rainConnectionError(error) {
 
 function rainEmptyMessage(health) {
   if (health?.last_capture_error?.includes("屏幕录制失败")) return "识别助手没有屏幕录制权限；请在系统设置中允许后重启助手";
+  if (health?.last_capture_error?.includes("已看到非零作答窗口")) return health.last_capture_error;
   if (health?.last_capture_error && !health.last_capture_error.includes("未发现") && !health.last_capture_error.includes("尚未识别")) {
     return `识别助手截图失败：${health.last_capture_error}`;
   }
@@ -219,6 +220,21 @@ function buildRainTeachingGuidance(stats, correctAnswer) {
     return "本题没有人选错。不要编造错因；在正常讲解后用一句话提醒判断关键即可。";
   }
   return `本班有学生选了错误选项：${wrongChoices.join("、")}。正常讲完正确答案和核心原理后，必须单独加一段“本班易错点”（最多两句）：先准确点名这些选项及人数，再依据课程知识指出一种可能的概念混淆，并给出一个具体的判断提醒。不要仅重复逐项判断，不要推断学生个人真实想法；1人作答不得说“多数人”或“普遍”。`;
+}
+
+function parseIndependentAnswer(text) {
+  const value = String(text || "").normalize("NFKC").trim();
+  const match = /^(?:独立判断|答案)\s*[:：]\s*([A-D]|无法判断)\s*[。.]?$/i.exec(value);
+  return match && match[1] !== "无法判断" ? match[1].toUpperCase() : null;
+}
+
+async function verifyTeacherAnswer(key, question, correctAnswer) {
+  if (!correctAnswer) return;
+  const checkPrompt = `请只依据你已配置的课程知识库，独立判断下面这道单选题的正确选项。此阶段不要参考教师答案或学生作答人数，也不要展开讲解。只输出一行“独立判断：A”（A、B、C、D之一）；题意不清、知识不足或有多个合理选项时只输出“独立判断：无法判断”。\n\n题目：\n${question}`;
+  const result = await callYuanqi(key, [{ role: "user", content: [{ type: "text", text: checkPrompt }] }]);
+  const independent = parseIndependentAnswer(result);
+  if (!independent) throw new Error("AI 无法明确独立判断本题答案，已停止讲解。请核对题目和标准答案。");
+  if (independent !== correctAnswer) throw new Error(`答案冲突：PPT 标准答案为 ${correctAnswer}，AI 独立判断为 ${independent}。已停止讲解，请教师核对。`);
 }
 
 async function checkRainStatsConnection() {
@@ -398,6 +414,9 @@ async function explainCurrentSlide() {
 
   isBusy = true;
   document.dispatchEvent(new Event("answer-pending"));
+  conversation = [];
+  answerSlideId = null;
+  els.answer.textContent = "正在核对题目…";
   setBusy(true, "正在读取当前页…");
   try {
     const sourceSlide = await getCurrentSlideInfo();
@@ -405,6 +424,11 @@ async function explainCurrentSlide() {
     const slideText = await readCurrentSlideText(sourceSlide);
     const { question, correctAnswer, followup } = parseSlideQuestion(slideText);
     if (!question) throw new Error("当前页没有读取到文字。图片题请把题目文字放在一个文本框中。");
+
+    if (correctAnswer) {
+      setBusy(true, "正在独立核对标准答案…");
+      await verifyTeacherAnswer(key, question, correctAnswer);
+    }
 
     const rainResult = await getRainStatsResult([question]);
     if (rainResult.stats && !correctAnswer) {
@@ -441,6 +465,7 @@ async function explainCurrentSlide() {
     setStatus(rainStats ? `${completed}${answerLabel}；已使用雨课堂作答分布。` : `${completed}${answerLabel}；未使用作答分布：${rainResult.reason}。`, false);
   } catch (error) {
     document.dispatchEvent(new Event("answer-failed"));
+    els.answer.textContent = error.message || String(error);
     setStatus(error.message || String(error), true);
   } finally {
     isBusy = false;
