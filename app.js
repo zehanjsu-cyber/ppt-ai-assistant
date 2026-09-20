@@ -237,10 +237,19 @@ function parseIndependentAnswer(text) {
 async function verifyTeacherAnswer(key, question, correctAnswer) {
   if (!correctAnswer) return;
   const checkPrompt = `请只依据你已配置的课程知识库，独立判断下面这道单选题的正确选项。此阶段不要参考教师答案或学生作答人数，也不要展开讲解。只输出一行“独立判断：A”（A、B、C、D之一）；题意不清、知识不足或有多个合理选项时只输出“独立判断：无法判断”。\n\n题目：\n${question}`;
-  const result = await callYuanqi(key, [{ role: "user", content: [{ type: "text", text: checkPrompt }] }]);
+  const result = await callYuanqi(key, [{ role: "user", content: [{ type: "text", text: checkPrompt }] }], "ppt-classroom-check");
   const independent = parseIndependentAnswer(result);
   if (!independent) throw new Error("AI 无法明确独立判断本题答案，已停止讲解。请核对题目和标准答案。");
   if (independent !== correctAnswer) throw new Error(`答案冲突：PPT 标准答案为 ${correctAnswer}，AI 独立判断为 ${independent}。已停止讲解，请教师核对。`);
+}
+
+async function getCheckedExplanation(key, question, correctAnswer, messages) {
+  if (!correctAnswer) return callYuanqi(key, messages);
+  const [, answer] = await Promise.all([
+    verifyTeacherAnswer(key, question, correctAnswer),
+    callYuanqi(key, messages),
+  ]);
+  return answer;
 }
 
 async function checkRainStatsConnection() {
@@ -431,11 +440,6 @@ async function explainCurrentSlide() {
     const { question, correctAnswer, followup } = parseSlideQuestion(slideText);
     if (!question) throw new Error("当前页没有读取到文字。图片题请把题目文字放在一个文本框中。");
 
-    if (correctAnswer) {
-      setBusy(true, "正在独立核对标准答案…");
-      await verifyTeacherAnswer(key, question, correctAnswer);
-    }
-
     const rainResult = await getRainStatsResult([question]);
     if (rainResult.stats && !correctAnswer) {
       rainResult.stats = null;
@@ -457,9 +461,10 @@ async function explainCurrentSlide() {
       ? `这是教师预设的课堂追问：${followup}\n\n请直接回答这个追问，不要重新完整讲一遍原题。若追问的前提与教师标注的标准答案冲突，先指出冲突，不得编造支持理由。`
       : "请先明确给出正确答案，再解释核心原理；有选项时逐项判断，最后用一句话总结考点。";
     const prompt = `你是大学宏观经济学课堂的AI课程助教。原题如下：\n\n${question}${answerContext}${statsContext}\n\n${task}\n\n要求：优先依据你已配置的课程知识库解释原理；知识库没有支持的细节不要编造；不虚构题目中没有的数据；控制在课堂60—90秒可讲完。`;
-    conversation = [{ role: "user", content: [{ type: "text", text: prompt }] }];
-    const answer = await callYuanqi(key, conversation);
-    conversation.push({ role: "assistant", content: [{ type: "text", text: answer }] });
+    const messages = [{ role: "user", content: [{ type: "text", text: prompt }] }];
+    setBusy(true, correctAnswer ? "正在核对并准备讲解…" : "正在准备讲解…");
+    const answer = await getCheckedExplanation(key, question, correctAnswer, messages);
+    conversation = [...messages, { role: "assistant", content: [{ type: "text", text: answer }] }];
     els.answer.textContent = answer;
     els.followupQuestion.textContent = "";
     els.followupQuestion.classList.add("hidden");
@@ -519,7 +524,7 @@ function setBusy(disabled, message) {
   setStatus(message, false);
 }
 
-async function callYuanqi(key, messages) {
+async function callYuanqi(key, messages, userId = "ppt-classroom") {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 90000);
   try {
@@ -533,7 +538,7 @@ async function callYuanqi(key, messages) {
     },
     body: JSON.stringify({
       assistant_id: ASSISTANT_ID,
-      user_id: "ppt-classroom",
+      user_id: userId,
       stream: false,
       messages,
     }),
