@@ -20,8 +20,6 @@
     .show-view .answer-card { min-height: 0; }
     .followup input { min-width: 0; }
     .show-view .followup { display: grid; margin-top: 8px; }
-    #startRainHelper { display: inline-block; text-decoration: none; }
-    .show-view #startRainHelper { display: none; }
   </style>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
 </head>
@@ -50,6 +48,7 @@
       <label class="check-label"><input id="rainStatsEnabled" type="checkbox">根据雨课堂作答情况讲解（默认关闭）</label>
       <p id="rainStatsStatus" class="hint">开启后，读取刚刚关闭的作答情况小窗口；未识别到时仍按原方式讲题。</p>
       <button id="checkRainStats" class="secondary" type="button">课前一键自检</button>
+      <p class="hint">识别助手需课前在本机双击“启动雨课堂识别助手.command”；终端窗口可最小化，但不能关闭。</p>
       <hr>
       <label class="check-label"><input id="autoScroll" type="checkbox" checked>放映时自动滚动讲解</label>
       <label for="scrollSeconds">每屏停留时间（秒）</label>
@@ -71,7 +70,7 @@
     <button id="explainButton" class="primary" disabled>宏观 AI 助教讲解本题</button>
     <p id="status" class="status">正在连接 PowerPoint…</p>
     <p id="rainStatsLiveStatus" class="hint stats-badge" aria-live="polite">学情数据：功能未启用</p>
-    <div class="settings-toolbar" style="flex-shrink:0;margin:0 0 8px;display:flex;gap:8px;flex-wrap:wrap"><button id="settingsButton" class="secondary" aria-label="设置" style="padding:6px 12px">⚙︎ 助教设置</button><a id="startRainHelper" class="secondary" href="pptai-rain://start" style="padding:6px 12px">启动雨课堂识别助手（终端）</a></div>
+    <div class="settings-toolbar" style="flex-shrink:0;margin:0 0 8px"><button id="settingsButton" class="secondary" aria-label="设置" style="padding:6px 12px">⚙︎ 助教设置</button></div>
 
     <section class="answer-card">
       <div class="answer-title">本题解析 <span id="readingStatus" aria-live="polite">等待讲解</span><button id="replayVoice" class="secondary" disabled style="padding:4px 10px;font-size:12px">播放 / 重听</button></div>
