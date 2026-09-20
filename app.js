@@ -415,6 +415,41 @@ async function checkAutoExplain() {
   await explainCurrentSlide();
 }
 
+function assembleSlideText(textShapes) {
+  const entries = textShapes.map((shape) => ({
+    text: shape.textFrame.textRange.text.trim(),
+    left: shape.left, top: shape.top, width: shape.width, height: shape.height,
+  })).filter((entry) => entry.text);
+  const original = entries.map((entry) => entry.text).join("\n").trim();
+  // An existing, explicitly labelled question needs no spatial reconstruction.
+  if (entries.some((entry) => /(?:^|\n)\s*[A-D]\s*[.、．):：]\s*\S/i.test(entry.text))) return original;
+
+  const labels = entries.filter((entry) => /^[A-D]$/i.test(entry.text));
+  if (labels.length !== 4 || new Set(labels.map((entry) => entry.text.toUpperCase())).size !== 4) return original;
+  const available = entries.filter((entry) =>
+    !labels.includes(entry) && !/^(?:标准答案|课堂追问)\s*[:：]/.test(entry.text) &&
+    entry.text.length <= 400 && Number.isFinite(entry.left) && Number.isFinite(entry.top) &&
+    entry.width > 0 && entry.height > 0
+  );
+  const paired = [];
+  const used = new Set();
+  for (const label of labels) {
+    const midY = label.top + label.height / 2;
+    const candidates = available.filter((entry) =>
+      !used.has(entry) && entry.left >= label.left + label.width - 3 &&
+      Math.abs(entry.top + entry.height / 2 - midY) <= Math.max(label.height, entry.height) * 0.35
+    ).sort((a, b) => a.left - b.left || Math.abs(a.top + a.height / 2 - midY) - Math.abs(b.top + b.height / 2 - midY));
+    if (candidates.length !== 1) {
+      throw new Error("本页选项字母与内容无法可靠配对。请将每项写成“A. 选项内容”后重试。");
+    }
+    used.add(candidates[0]);
+    paired.push({ label: label.text.toUpperCase(), value: candidates[0] });
+  }
+  const rest = entries.filter((entry) => !labels.includes(entry) && !used.has(entry)).map((entry) => entry.text);
+  const optionLines = paired.sort((a, b) => a.label.localeCompare(b.label)).map(({ label, value }) => `${label}. ${value.text}`);
+  return [...rest, ...optionLines].join("\n").trim();
+}
+
 async function readCurrentSlideText(currentSlide) {
   return PowerPoint.run(async (context) => {
     let slide;
@@ -438,17 +473,12 @@ async function readCurrentSlideText(currentSlide) {
       shape.type === PowerPoint.ShapeType.geometricShape ||
       shape.type === PowerPoint.ShapeType.placeholder
     );
-    textShapes.forEach((shape) => shape.textFrame.load("hasText,textRange/text"));
+    textShapes.forEach((shape) => {
+      shape.load("left,top,width,height");
+      shape.textFrame.load("hasText,textRange/text");
+    });
     await context.sync();
-
-    const lines = [];
-    for (const shape of textShapes) {
-      if (shape.textFrame.hasText) {
-        const text = shape.textFrame.textRange.text.trim();
-        if (text) lines.push(text);
-      }
-    }
-    return lines.join("\n").trim();
+    return assembleSlideText(textShapes.filter((shape) => shape.textFrame.hasText));
   });
 }
 
