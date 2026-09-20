@@ -129,7 +129,13 @@ function questionMatches(statsText, slideText) {
   for (let index = 0; index < target.length - 3; index += 2) units.add(target.slice(index, index + 4));
   let matches = 0;
   for (const unit of units) if (source.includes(unit)) matches++;
-  return units.size >= 3 && matches >= 3 && matches / units.size >= 0.35;
+  if (units.size < 3 || matches < 3) return false;
+  if (matches / units.size >= 0.35) return true;
+  // A Terminal window can cover part of the answer options in the screenshot.
+  // Allow that narrow case only when the full, non-generic question stem is
+  // visible and the remaining option text still contributes overlap.
+  const stem = normalizedQuestion(String(slideText).split(/[?？]/, 1)[0]);
+  return stem.length >= 18 && source.includes(stem) && matches / units.size >= 0.30;
 }
 
 function rainConnectionError(error) {
